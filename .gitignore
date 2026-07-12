@@ -1,0 +1,5 @@
+.env
+docker/volumes/postgres_data/**
+docker/volumes/php_home/**
+docker/volumes/node_home/**
+!docker/volumes/**/.gitkeep
