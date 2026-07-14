@@ -1,12 +1,6 @@
 <template>
   <q-page class="q-pa-md" style="max-width: 720px; margin: 0 auto">
-    <div class="row items-center q-mb-md">
-      <div class="text-h5 text-weight-bold">Shopping lists</div>
-      <q-space />
-      <q-btn flat round icon="logout" @click="onLogout" />
-    </div>
-
-    <q-form class="row q-gutter-sm q-mb-lg" @submit.prevent="create">
+    <q-form class="row items-center q-gutter-sm q-mb-lg" @submit.prevent="create">
       <q-input
         v-model="newName"
         outlined
@@ -23,6 +17,7 @@
         :disable="!newName.trim()"
         unelevated
       />
+      <q-btn flat round icon="logout" @click="onLogout" />
     </q-form>
 
     <q-inner-loading :showing="loading" />
@@ -41,8 +36,8 @@
       @end="persistOrder"
     >
       <template #item="{ element: list }">
-        <q-item clickable v-ripple @click="open(list.id)">
-          <q-item-section side class="q-pr-sm">
+        <q-item clickable v-ripple class="q-pl-none" @click="open(list.id)">
+          <q-item-section side style="width: 32px; min-width: 32px" class="items-center">
             <q-icon
               name="drag_indicator"
               class="drag-handle"

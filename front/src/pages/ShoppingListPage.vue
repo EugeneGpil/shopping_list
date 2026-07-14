@@ -3,8 +3,27 @@
     <!-- Header -->
     <div class="row items-center q-mb-sm no-wrap">
       <q-btn flat round dense icon="arrow_back" @click="goBack" />
-      <div class="text-h6 text-weight-bold q-ml-sm ellipsis">{{ listName }}</div>
+      <q-input
+        v-model="listName"
+        dense
+        borderless
+        class="col q-ml-sm"
+        input-class="text-h6 text-weight-bold ellipsis"
+        @focus="beginNameEdit"
+        @change="saveName"
+        @keydown.enter.prevent="onNameTitleEnter"
+      />
       <q-space />
+      <q-btn
+        flat
+        round
+        dense
+        icon="pin"
+        :color="showQuantity ? 'primary' : 'grey'"
+        @click="toggleQuantity"
+      >
+        <q-tooltip>{{ showQuantity ? 'Hide quantity' : 'Show quantity' }}</q-tooltip>
+      </q-btn>
       <q-btn flat round dense icon="undo" :disable="!canUndo" @click="undo">
         <q-tooltip>Undo</q-tooltip>
       </q-btn>
@@ -34,7 +53,7 @@
     <div class="row items-center text-caption text-grey q-mb-xs">
       <div style="width: 32px" />
       <div class="col">Name</div>
-      <div style="width: 56px; text-align: center">Qty</div>
+      <div v-if="showQuantity" style="width: 56px; text-align: center">Qty</div>
       <div style="width: 20px" />
     </div>
 
@@ -71,7 +90,7 @@
               @keydown.enter.prevent="onNameEnter(item)"
             />
           </q-item-section>
-          <q-item-section side style="width: 56px; min-width: 56px" class="col-auto">
+          <q-item-section v-if="showQuantity" side style="width: 56px; min-width: 56px" class="col-auto">
             <q-input
               :ref="(el) => setRef('qty', item._key, el)"
               :model-value="item.quantity"
@@ -110,6 +129,7 @@ const router = useRouter()
 const listId = route.params.id
 
 const listName = ref('')
+const showQuantity = ref(true)
 const items = ref([])
 const query = ref('')
 const saveStatus = ref('')
@@ -185,9 +205,49 @@ function onDragEnd() {
   dragSnapshot = null
 }
 
+// ---- list name editing ----
+let nameSnapshot = ''
+function beginNameEdit() {
+  nameSnapshot = listName.value
+}
+async function saveName() {
+  const name = listName.value.trim()
+  if (!name) {
+    listName.value = nameSnapshot
+    return
+  }
+  listName.value = name
+  if (name === nameSnapshot) return
+  saveStatus.value = 'Saving…'
+  try {
+    await api.put(`shopping-list?list_id=${listId}`, { name })
+    saveStatus.value = 'Saved'
+  } catch {
+    listName.value = nameSnapshot
+    saveStatus.value = 'Save failed'
+  }
+}
+function onNameTitleEnter(e) {
+  e.target.blur()
+}
+
+// ---- quantity visibility (per-list, persisted) ----
+async function toggleQuantity() {
+  showQuantity.value = !showQuantity.value
+  saveStatus.value = 'Saving…'
+  try {
+    await api.put(`shopping-list?list_id=${listId}`, { show_quantity: showQuantity.value })
+    saveStatus.value = 'Saved'
+  } catch {
+    showQuantity.value = !showQuantity.value
+    saveStatus.value = 'Save failed'
+  }
+}
+
 // ---- keyboard flow ----
 function onNameEnter(item) {
-  focusField('qty', item._key)
+  if (showQuantity.value) focusField('qty', item._key)
+  else addRowAfter(item)
 }
 function onQtyEnter(item) {
   addRowAfter(item)
@@ -294,6 +354,7 @@ onMounted(async () => {
   try {
     const { data } = await api.get(`shopping-list?list_id=${listId}`)
     listName.value = data.name
+    showQuantity.value = data.show_quantity ?? true
     items.value = data.items.map((i) => ({
       name: i.name,
       quantity: i.quantity ?? '',

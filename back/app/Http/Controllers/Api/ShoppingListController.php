@@ -62,6 +62,7 @@ class ShoppingListController extends Controller
     {
         $data = $request->validate([
             'name' => 'sometimes|required|string|max:255',
+            'show_quantity' => 'sometimes|boolean',
             'items' => 'sometimes|array',
             'items.*.name' => 'nullable|string|max:255',
             'items.*.quantity' => 'nullable|string|max:255',
@@ -72,6 +73,10 @@ class ShoppingListController extends Controller
         DB::transaction(function () use ($list, $data) {
             if (array_key_exists('name', $data)) {
                 $list->update(['name' => $data['name']]);
+            }
+
+            if (array_key_exists('show_quantity', $data)) {
+                $list->update(['show_quantity' => $data['show_quantity']]);
             }
 
             if (array_key_exists('items', $data)) {
@@ -108,6 +113,7 @@ class ShoppingListController extends Controller
         return [
             'id' => $list->id,
             'name' => $list->name,
+            'show_quantity' => $list->show_quantity ?? true,
             'items' => $list->items()->get(['id', 'name', 'quantity', 'position']),
         ];
     }
