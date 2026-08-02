@@ -22,11 +22,11 @@ jobs:
       HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # --- toolchain images ----------------------------------------------
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # A fresh runner has no docker images. The php and node services declare
       # both `image:` and `build:`, and compose builds only when an image with
@@ -41,7 +41,7 @@ jobs:
       # docker-php-ext-install layer compiles gd, intl and the rest from
       # source — measured at 131 s cold, seconds when cached.
       - name: Build the php image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./docker/php
           tags: shopping_list-php:latest
@@ -50,7 +50,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=php
 
       - name: Build the node image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./docker/node
           tags: shopping_list-node:latest
