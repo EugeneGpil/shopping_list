@@ -35,7 +35,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-forest}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
     volumes:
-      - ./docker/volumes/postgres_data:/var/lib/postgresql
+      - ${POSTGRES_DATA:-./docker/volumes/postgres_data}:/var/lib/postgresql
     ports:
       - "${DB_PORT:-5432}:5432"
     healthcheck:

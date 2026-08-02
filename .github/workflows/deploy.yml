@@ -147,8 +147,16 @@ jobs:
       - name: Install Deployer
         run: |
           composer global require deployer/deployer:7.5.12 --no-interaction --no-progress
-          composer global config bin-dir --absolute >> "$GITHUB_PATH"
-          dep --version
+
+          # composer prints a "Changed current directory to …" notice, so take
+          # the last line only.
+          BIN="$(composer global config bin-dir --absolute 2>/dev/null | tail -n1)"
+
+          # Called by absolute path: $GITHUB_PATH only affects LATER steps, so
+          # `dep` is not yet resolvable from PATH inside this one.
+          "$BIN/dep" --version
+
+          echo "$BIN" >> "$GITHUB_PATH"
 
       - name: Set up SSH
         env:
