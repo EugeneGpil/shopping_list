@@ -6,7 +6,7 @@
         outlined
         dense
         class="col"
-        placeholder="New list name1"
+        placeholder="New list name"
         maxlength="255"
       />
       <q-btn
