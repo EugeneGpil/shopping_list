@@ -27,16 +27,8 @@ set('keep_releases', 2);   // current + one to roll back to; each release is ~10
 
 set('artifact', 'build/release.tar.gz');
 
-set('shared_files', [
-    '.env',       // docker compose: ports, DB credentials, COMPOSE_PROJECT_NAME
-    'back/.env',  // Laravel production config
-]);
-
-set('shared_dirs', [
-    'back/storage',                 // logs, caches, and app/firebase-credentials.json
-    'docker/volumes/postgres_data', // the database — must never live inside a release
-    'docker/volumes/php_home',
-]);
+set('shared_files', ['.env']);
+set('shared_dirs', []);
 
 // Shared dirs are already owned by the deploy user; skip the ACL/chmod pass.
 set('writable_dirs', []);

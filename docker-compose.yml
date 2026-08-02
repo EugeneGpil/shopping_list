@@ -22,7 +22,9 @@ services:
         GROUP_ID: ${GROUP_ID:-1000}
     volumes:
       - ./back:/var/www/html
-      - ./docker/volumes/php_home:/home/app
+      - ${SHARED_PATH:-.}/back/.env:/var/www/html/.env
+      - ${SHARED_PATH:-.}/back/storage:/var/www/html/storage
+      - ${SHARED_PATH:-.}/docker/volumes/php_home:/home/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,7 +37,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-forest}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
     volumes:
-      - ${POSTGRES_DATA:-./docker/volumes/postgres_data}:/var/lib/postgresql
+      - ${SHARED_PATH:-.}/docker/volumes/postgres_data:/var/lib/postgresql
     ports:
       - "${DB_PORT:-5432}:5432"
     healthcheck:
