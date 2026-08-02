@@ -161,8 +161,19 @@ export default defineConfig((ctx) => {
       // useCredentialsForManifestTag: true,
       // injectPwaMetaTags: false,
       // extendPWACustomSWConf (esbuildConf) {},
-      // extendGenerateSWOptions (cfg) {},
       // extendInjectManifestOptions (cfg) {}
+
+      extendGenerateSWOptions(cfg) {
+        // In production the API shares the origin with the front (nginx routes
+        // /api, /storage and /sanctum to Laravel), so the SPA navigation
+        // fallback must not answer for those paths.
+        cfg.navigateFallbackDenylist = [
+          ...(cfg.navigateFallbackDenylist || []),
+          /^\/api\//,
+          /^\/storage\//,
+          /^\/sanctum\//,
+        ]
+      },
     },
 
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/developing-cordova-apps/configuring-cordova
