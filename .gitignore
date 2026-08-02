@@ -1,4 +1,8 @@
 .env
+
+# Deploy build byproduct (see .github/workflows/deploy.yml)
+build/
+
 docker/volumes/postgres_data/**
 docker/volumes/php_home/**
 docker/volumes/node_home/**

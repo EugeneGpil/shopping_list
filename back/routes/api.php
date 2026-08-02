@@ -1,8 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\ShoppingListController;
 use Illuminate\Support\Facades\Route;
+
+// Probed by the deploy after the containers come up.
+Route::get('health', HealthController::class);
 
 Route::post('auth/firebase', [AuthController::class, 'firebase']);
 

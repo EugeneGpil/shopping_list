@@ -1,0 +1,29 @@
+# Paths excluded from `git archive`, which is how the deploy artifact is
+# assembled (.github/workflows/deploy.yml). See docs/DEPLOY.md.
+#
+# Caveat: export-ignore also applies to GitHub's "Download ZIP" and release
+# source archives — those will be missing these paths too.
+
+# The frontend ships as a prebuilt bundle; the build copies dist/pwa in
+# separately, so none of the sources are needed on the server.
+/front                export-ignore
+
+# These become symlinks into shared/ on the server. The tracked .gitignore and
+# .gitkeep placeholders inside them must not recreate them as real directories.
+/back/storage         export-ignore
+/docker/volumes       export-ignore
+
+# Not needed at runtime
+/back/tests           export-ignore
+/back/phpunit.xml     export-ignore
+/back/package.json    export-ignore
+/back/vite.config.js  export-ignore
+/back/README.md       export-ignore
+
+# Tooling and docs
+/.github              export-ignore
+/.claude              export-ignore
+/.idea                export-ignore
+/deploy.php           export-ignore
+/setup.sh             export-ignore
+/.env.example         export-ignore

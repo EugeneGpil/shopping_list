@@ -1,7 +1,5 @@
 FROM php:8.4-fpm-bookworm
 
-ARG USER_ID=1000
-ARG GROUP_ID=1000
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     git \
@@ -25,8 +23,11 @@ RUN apt-get update \
     zip \
     mbstring \
     pcntl \
-    intl \
-    && groupadd -g ${GROUP_ID} app \
+    intl
+
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd -g ${GROUP_ID} app \
     && useradd -u ${USER_ID} -g ${GROUP_ID} -m app \
     && echo 'HISTFILE=/home/app/.bash_history' >> /home/app/.bashrc \
     && echo 'HISTSIZE=1000' >> /home/app/.bashrc \
