@@ -90,6 +90,9 @@ export default defineConfig((ctx) => {
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#devserver
     devServer: {
       // https: true,
+      // No explicit port: Quasar picks a per-mode default (spa 9000, pwa 9200)
+      // so each mode gets its own origin and can't inherit another mode's
+      // service worker. docker-compose publishes both.
       open: true, // opens browser window automatically
     },
 

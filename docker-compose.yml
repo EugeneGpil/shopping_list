@@ -51,7 +51,7 @@ services:
         USER_ID: ${USER_ID:-1000}
         GROUP_ID: ${GROUP_ID:-1000}
     ports:
-      - "${QUASAR_PORT:-9000}:9000"
+      - "${QUASAR_PORT:-9200}:9200"      # quasar dev -m pwa (9200 is Quasar's pwa-mode default)
     volumes:
       - ./front:/var/www/html
       - ./docker/volumes/node_home:/home/app
