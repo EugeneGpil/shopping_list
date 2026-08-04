@@ -1,46 +1,19 @@
 <template>
   <q-page class="q-pa-md" style="max-width: 720px; margin: 0 auto">
-    <!-- Header -->
-    <div class="row items-center q-mb-sm no-wrap">
-      <q-btn flat round dense icon="arrow_back" @click="goBack" />
-      <q-input
-        v-model="listName"
-        dense
-        borderless
-        class="col q-ml-sm"
-        input-class="text-h6 text-weight-bold ellipsis"
-        @focus="beginNameEdit"
-        @change="saveName"
-        @keydown.enter.prevent="onNameTitleEnter"
-      />
-      <q-space />
-      <q-btn
-        flat
-        round
-        dense
-        icon="check_box"
-        :color="showCheckbox ? 'primary' : 'grey'"
-        @click="toggleCheckbox"
-      >
-        <q-tooltip>{{ showCheckbox ? 'Hide checkboxes' : 'Show checkboxes' }}</q-tooltip>
-      </q-btn>
-      <q-btn
-        flat
-        round
-        dense
-        icon="pin"
-        :color="showQuantity ? 'primary' : 'grey'"
-        @click="toggleQuantity"
-      >
-        <q-tooltip>{{ showQuantity ? 'Hide quantity' : 'Show quantity' }}</q-tooltip>
-      </q-btn>
-      <q-btn flat round dense icon="undo" :disable="!canUndo" @click="undo">
-        <q-tooltip>Undo</q-tooltip>
-      </q-btn>
-      <q-btn flat round dense icon="redo" :disable="!canRedo" @click="redo">
-        <q-tooltip>Redo</q-tooltip>
-      </q-btn>
-    </div>
+    <ShoppingListHeader
+      v-model:name="listName"
+      :show-quantity="showQuantity"
+      :show-checkbox="showCheckbox"
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      @name-focus="beginNameEdit"
+      @name-change="saveName"
+      @back="goBack"
+      @toggle-quantity="toggleQuantity"
+      @toggle-checkbox="toggleCheckbox"
+      @undo="undo"
+      @redo="redo"
+    />
 
     <div class="text-caption text-grey q-mb-sm" style="height: 16px">
       {{ saveStatus }}
@@ -77,65 +50,26 @@
       :disabled="!!query"
       :force-fallback="true"
       class="q-list q-list--bordered q-list--separator rounded-borders"
-      @start="onDragStart"
-      @end="onDragEnd"
+      @start="beginDrag"
+      @end="endDrag"
     >
       <template #item="{ element: item }">
-        <q-item v-show="matchesQuery(item)" class="q-pl-none">
-          <q-item-section side style="width: 32px; min-width: 32px" class="items-center row-side">
-            <q-icon
-              name="drag_indicator"
-              class="drag-handle"
-              color="grey-6"
-              :style="query ? 'opacity:0.3' : ''"
-            />
-          </q-item-section>
-          <q-item-section
-            v-if="showCheckbox"
-            side
-            style="width: 32px; min-width: 32px"
-            class="items-center q-pl-none row-side"
-          >
-            <q-checkbox
-              :model-value="item.checked"
-              dense
-              size="sm"
-              tabindex="-1"
-              @update:model-value="(v) => toggleChecked(item, v)"
-            />
-          </q-item-section>
-          <q-item-section>
-            <q-input
-              :ref="(el) => setRef('name', item._key, el)"
-              v-model="item.name"
-              dense
-              borderless
-              autogrow
-              :input-class="isStruck(item) ? 'row-name row-checked' : 'row-name'"
-              @focus="beginEdit"
-              @change="endEdit"
-              @keydown.enter.prevent="onNameEnter(item)"
-            />
-          </q-item-section>
-          <q-item-section v-if="showQuantity" top side style="width: 56px; min-width: 56px" class="col-auto">
-            <q-input
-              :ref="(el) => setRef('qty', item._key, el)"
-              :model-value="item.quantity"
-              dense
-              borderless
-              inputmode="numeric"
-              :input-class="isStruck(item) ? 'text-center row-checked' : 'text-center'"
-              @update:model-value="(v) => onQtyInput(item, v)"
-              @keypress="onQtyKeypress"
-              @focus="beginEdit"
-              @change="endEdit"
-              @keydown.enter.prevent="onQtyEnter(item)"
-            />
-          </q-item-section>
-          <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none row-side">
-            <q-btn flat round dense size="sm" padding="none" tabindex="-1" icon="delete" color="negative" @click="removeRow(item)" />
-          </q-item-section>
-        </q-item>
+        <ShoppingListRow
+          v-show="matchesQuery(item)"
+          :ref="(el) => setRowRef(item._key, el)"
+          :item="item"
+          :show-quantity="showQuantity"
+          :show-checkbox="showCheckbox"
+          :searching="!!query"
+          @update:name="(v) => (item.name = v)"
+          @update:quantity="(v) => (item.quantity = v)"
+          @toggle-checked="(v) => toggleChecked(item, v)"
+          @edit-start="beginEdit"
+          @edit-end="endEdit"
+          @name-enter="onNameEnter(item)"
+          @qty-enter="addRowAfter(item)"
+          @remove="removeRow(item)"
+        />
       </template>
     </draggable>
 
@@ -166,6 +100,10 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import { api } from 'src/api'
+import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
+import ShoppingListRow from 'src/components/ShoppingListRow.vue'
+import { useListHistory } from 'src/composables/useListHistory'
+import { useListSave } from 'src/composables/useListSave'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,89 +114,30 @@ const showQuantity = ref(true)
 const showCheckbox = ref(true)
 const items = ref([])
 const query = ref('')
-const saveStatus = ref('')
+
+const { saveStatus, scheduleSave, flush, markLoaded, stop: stopSaving } = useListSave(listId, items)
+const { canUndo, canRedo, record, undo, redo, beginEdit, endEdit, beginDrag, endDrag } =
+  useListHistory(items, scheduleSave)
 
 let keySeq = 0
 const nextKey = () => ++keySeq
 
-// per-row input refs, so we can move focus programmatically
-const refs = { name: new Map(), qty: new Map() }
-function setRef(field, key, el) {
-  if (el) refs[field].set(key, el)
-  else refs[field].delete(key)
+// per-row component refs, to move focus and re-measure row heights programmatically
+const rowRefs = new Map()
+function setRowRef(key, el) {
+  if (el) rowRefs.set(key, el)
+  else rowRefs.delete(key)
 }
-function focusField(field, key) {
-  nextTick(() => refs[field].get(key)?.focus())
+function focusName(key) {
+  nextTick(() => rowRefs.get(key)?.focusName())
 }
-
-// Quasar's `autogrow` re-measures on input only, so anything that changes the
-// name column's width (rotation, toggling a column) leaves wrapped rows clipped
-// at their old height. A native input event runs Quasar's own measurement; the
-// value is unchanged, so QInput swallows it without emitting an update.
+function focusQty(key) {
+  nextTick(() => rowRefs.get(key)?.focusQty())
+}
 function regrowNames() {
   nextTick(() => {
-    for (const input of refs.name.values()) {
-      input?.nativeEl?.dispatchEvent(new Event('input'))
-    }
+    for (const row of rowRefs.values()) row?.regrow()
   })
-}
-
-// ---- history (local only) ----
-const past = ref([])
-const future = ref([])
-const canUndo = computed(() => past.value.length > 0)
-const canRedo = computed(() => future.value.length > 0)
-
-const clone = (arr) => arr.map((r) => ({ ...r }))
-const serialize = (arr) =>
-  JSON.stringify(arr.map((r) => ({ name: r.name, quantity: r.quantity, checked: r.checked })))
-
-function pushHistory(snapshot) {
-  past.value.push(snapshot)
-  if (past.value.length > 100) past.value.shift()
-  future.value = []
-}
-function record() {
-  pushHistory(clone(items.value))
-}
-
-function undo() {
-  if (!past.value.length) return
-  future.value.push(clone(items.value))
-  items.value = past.value.pop()
-  scheduleSave()
-}
-function redo() {
-  if (!future.value.length) return
-  past.value.push(clone(items.value))
-  items.value = future.value.pop()
-  scheduleSave()
-}
-
-// snapshot on focus (pre-edit); commit on change if something changed
-let editSnapshot = null
-function beginEdit() {
-  editSnapshot = clone(items.value)
-}
-function endEdit() {
-  if (editSnapshot && serialize(editSnapshot) !== serialize(items.value)) {
-    pushHistory(editSnapshot)
-    scheduleSave()
-  }
-  editSnapshot = null
-}
-
-// ---- drag reorder ----
-let dragSnapshot = null
-function onDragStart() {
-  dragSnapshot = clone(items.value)
-}
-function onDragEnd() {
-  if (dragSnapshot && serialize(dragSnapshot) !== serialize(items.value)) {
-    pushHistory(dragSnapshot)
-    scheduleSave()
-  }
-  dragSnapshot = null
 }
 
 // ---- list name editing ----
@@ -283,9 +162,6 @@ async function saveName() {
     saveStatus.value = 'Save failed'
   }
 }
-function onNameTitleEnter(e) {
-  e.target.blur()
-}
 
 // ---- column visibility (per-list, persisted) ----
 async function toggleColumn(flag, field) {
@@ -306,49 +182,23 @@ const toggleCheckbox = () => toggleColumn(showCheckbox, 'show_checkbox')
 
 // ---- keyboard flow ----
 function onNameEnter(item) {
-  if (showQuantity.value) focusField('qty', item._key)
+  if (showQuantity.value) focusQty(item._key)
   else addRowAfter(item)
 }
-function onQtyEnter(item) {
-  addRowAfter(item)
-}
 
-// quantity accepts positive integers only ("" allowed = no quantity)
-function onQtyKeypress(e) {
-  if (!/[0-9]/.test(e.key)) e.preventDefault()
-}
-function onQtyInput(item, value) {
-  const digits = String(value ?? '').replace(/[^0-9]/g, '').replace(/^0+/, '')
-  item.quantity = digits
-  // force the DOM to reflect the sanitized value even when the model is unchanged
-  // (e.g. pasting "abc" collapses to "" which equals the previous model value)
-  nextTick(() => {
-    const q = refs.qty.get(item._key)
-    const el = q?.getNativeElement?.()
-    if (el && el.value !== digits) el.value = digits
-  })
-}
-
-// ---- checked (done) state ----
-// Hiding the checkbox column also drops the strikethrough — otherwise a checked
-// row would be struck through with no way to uncheck it. The flag itself is kept.
-function isStruck(item) {
-  return showCheckbox.value && item.checked
-}
+// ---- mutations ----
 function toggleChecked(item, value) {
   record()
   item.checked = !!value
   scheduleSave()
 }
-
-// ---- mutations ----
 // Keep at least one (empty) row so there is always somewhere to start typing.
 function ensureRow(focus = false) {
   if (items.value.length === 0) {
     const row = { name: '', quantity: '', checked: false, _key: nextKey() }
     items.value.push(row)
     scheduleSave()
-    if (focus) focusField('name', row._key)
+    if (focus) focusName(row._key)
   }
 }
 function insertRow(index) {
@@ -356,7 +206,7 @@ function insertRow(index) {
   const row = { name: '', quantity: '', checked: false, _key: nextKey() }
   items.value.splice(index, 0, row)
   scheduleSave()
-  focusField('name', row._key)
+  focusName(row._key)
 }
 function addRowAfter(item) {
   insertRow(items.value.indexOf(item) + 1)
@@ -371,37 +221,6 @@ function removeRow(item) {
   items.value.splice(idx, 1)
   ensureRow()
   scheduleSave()
-}
-
-// ---- persistence (debounced) ----
-let saveTimer = null
-let loaded = false
-let pendingSave = false
-
-function scheduleSave() {
-  if (!loaded) return
-  pendingSave = true
-  saveStatus.value = 'Saving…'
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(save, 700)
-}
-async function save() {
-  clearTimeout(saveTimer)
-  pendingSave = false
-  const payload = items.value.map((r) => ({
-    name: r.name.trim(),
-    quantity: r.quantity?.trim() || null,
-    checked: !!r.checked,
-  }))
-  try {
-    await api.put(`shopping-list?list_id=${listId}`, { items: payload })
-    saveStatus.value = 'Saved'
-  } catch {
-    saveStatus.value = 'Save failed'
-  }
-}
-async function flush() {
-  if (pendingSave) await save()
 }
 
 // ---- search ----
@@ -440,7 +259,7 @@ onMounted(async () => {
       checked: !!i.checked,
       _key: nextKey(),
     }))
-    loaded = true
+    markLoaded()
     ensureRow(true)
   } catch {
     // not found / not owned -> bounce home
@@ -454,33 +273,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', regrowNames)
-  if (pendingSave) save()
-  clearTimeout(saveTimer)
+  stopSaving()
 })
 </script>
-
-<style scoped>
-.drag-handle {
-  cursor: grab;
-}
-.drag-handle:active {
-  cursor: grabbing;
-}
-/* Long names wrap, so a row can be several lines tall. Pin the side controls to
-   a one-line-tall box at the top so they stay level with the first line of text
-   (40px = height of a dense borderless q-input holding one line). */
-.row-side {
-  align-self: flex-start;
-  height: 40px;
-}
-/* Justify the wrapped name so every full line reaches both edges, like a book.
-   The last line of an item stays flush left, as it does in print. */
-:deep(.row-name) {
-  text-align: justify;
-}
-/* :deep — the class lands on the native input inside q-input */
-:deep(.row-checked) {
-  text-decoration: line-through;
-  opacity: 0.55;
-}
-</style>
