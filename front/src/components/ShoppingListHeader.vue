@@ -2,14 +2,13 @@
   <div class="row items-center q-mb-sm no-wrap">
     <q-btn flat round dense icon="arrow_back" @click="emit('back')" />
     <q-input
-      :model-value="name"
+      v-model="store.listName"
       dense
       borderless
       class="col q-ml-sm"
       input-class="text-h6 text-weight-bold ellipsis"
-      @update:model-value="(v) => emit('update:name', v)"
-      @focus="emit('name-focus')"
-      @change="emit('name-change')"
+      @focus="store.beginNameEdit"
+      @change="store.saveName"
       @keydown.enter.prevent="onTitleEnter"
     />
     <q-space />
@@ -18,49 +17,37 @@
       round
       dense
       icon="check_box"
-      :color="showCheckbox ? 'primary' : 'grey'"
-      @click="emit('toggle-checkbox')"
+      :color="store.showCheckbox ? 'primary' : 'grey'"
+      @click="store.toggleCheckbox"
     >
-      <q-tooltip>{{ showCheckbox ? 'Hide checkboxes' : 'Show checkboxes' }}</q-tooltip>
+      <q-tooltip>{{ store.showCheckbox ? 'Hide checkboxes' : 'Show checkboxes' }}</q-tooltip>
     </q-btn>
     <q-btn
       flat
       round
       dense
       icon="pin"
-      :color="showQuantity ? 'primary' : 'grey'"
-      @click="emit('toggle-quantity')"
+      :color="store.showQuantity ? 'primary' : 'grey'"
+      @click="store.toggleQuantity"
     >
-      <q-tooltip>{{ showQuantity ? 'Hide quantity' : 'Show quantity' }}</q-tooltip>
+      <q-tooltip>{{ store.showQuantity ? 'Hide quantity' : 'Show quantity' }}</q-tooltip>
     </q-btn>
-    <q-btn flat round dense icon="undo" :disable="!canUndo" @click="emit('undo')">
+    <q-btn flat round dense icon="undo" :disable="!store.canUndo" @click="store.undo">
       <q-tooltip>Undo</q-tooltip>
     </q-btn>
-    <q-btn flat round dense icon="redo" :disable="!canRedo" @click="emit('redo')">
+    <q-btn flat round dense icon="redo" :disable="!store.canRedo" @click="store.redo">
       <q-tooltip>Redo</q-tooltip>
     </q-btn>
   </div>
 </template>
 
 <script setup>
-defineProps({
-  name: { type: String, default: '' },
-  showQuantity: { type: Boolean, default: true },
-  showCheckbox: { type: Boolean, default: true },
-  canUndo: { type: Boolean, default: false },
-  canRedo: { type: Boolean, default: false },
-})
+import { useShoppingListStore } from 'src/stores/shoppingList'
 
-const emit = defineEmits([
-  'update:name',
-  'name-focus',
-  'name-change',
-  'back',
-  'toggle-quantity',
-  'toggle-checkbox',
-  'undo',
-  'redo',
-])
+// Navigation stays with the page — it owns the router and the flush-before-leave.
+const emit = defineEmits(['back'])
+
+const store = useShoppingListStore()
 
 // Enter in the title just commits it — blurring fires `change`, which saves.
 function onTitleEnter(e) {
