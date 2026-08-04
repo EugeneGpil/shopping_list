@@ -139,6 +139,22 @@
       </template>
     </draggable>
 
+    <!-- A new row is always appended at the end, so while a search is filtering the
+         list it would land out of view — disable it until the search is cleared. -->
+    <q-btn
+      flat
+      dense
+      no-caps
+      icon="add"
+      label="Add item"
+      color="primary"
+      class="full-width q-mt-sm"
+      :disable="!!query"
+      @click="addRow"
+    >
+      <q-tooltip v-if="query">Clear the search to add items</q-tooltip>
+    </q-btn>
+
     <div v-if="visibleCount === 0" class="text-grey text-center q-my-lg">
       {{ query ? 'No items match your search.' : 'No items yet.' }}
     </div>
@@ -335,13 +351,18 @@ function ensureRow(focus = false) {
     if (focus) focusField('name', row._key)
   }
 }
-function addRowAfter(item) {
+function insertRow(index) {
   record()
-  const idx = items.value.indexOf(item)
   const row = { name: '', quantity: '', checked: false, _key: nextKey() }
-  items.value.splice(idx + 1, 0, row)
+  items.value.splice(index, 0, row)
   scheduleSave()
   focusField('name', row._key)
+}
+function addRowAfter(item) {
+  insertRow(items.value.indexOf(item) + 1)
+}
+function addRow() {
+  insertRow(items.value.length)
 }
 function removeRow(item) {
   const idx = items.value.indexOf(item)
