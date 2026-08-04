@@ -82,7 +82,7 @@
     >
       <template #item="{ element: item }">
         <q-item v-show="matchesQuery(item)" class="q-pl-none">
-          <q-item-section side style="width: 32px; min-width: 32px" class="items-center">
+          <q-item-section side style="width: 32px; min-width: 32px" class="items-center row-side">
             <q-icon
               name="drag_indicator"
               class="drag-handle"
@@ -94,7 +94,7 @@
             v-if="showCheckbox"
             side
             style="width: 32px; min-width: 32px"
-            class="items-center q-pl-none"
+            class="items-center q-pl-none row-side"
           >
             <q-checkbox
               :model-value="item.checked"
@@ -110,13 +110,14 @@
               v-model="item.name"
               dense
               borderless
-              :input-class="isStruck(item) ? 'row-checked' : ''"
+              autogrow
+              :input-class="isStruck(item) ? 'row-name row-checked' : 'row-name'"
               @focus="beginEdit"
               @change="endEdit"
               @keydown.enter.prevent="onNameEnter(item)"
             />
           </q-item-section>
-          <q-item-section v-if="showQuantity" side style="width: 56px; min-width: 56px" class="col-auto">
+          <q-item-section v-if="showQuantity" top side style="width: 56px; min-width: 56px" class="col-auto">
             <q-input
               :ref="(el) => setRef('qty', item._key, el)"
               :model-value="item.quantity"
@@ -131,7 +132,7 @@
               @keydown.enter.prevent="onQtyEnter(item)"
             />
           </q-item-section>
-          <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none">
+          <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none row-side">
             <q-btn flat round dense size="sm" padding="none" tabindex="-1" icon="delete" color="negative" @click="removeRow(item)" />
           </q-item-section>
         </q-item>
@@ -172,6 +173,18 @@ function setRef(field, key, el) {
 }
 function focusField(field, key) {
   nextTick(() => refs[field].get(key)?.focus())
+}
+
+// Quasar's `autogrow` re-measures on input only, so anything that changes the
+// name column's width (rotation, toggling a column) leaves wrapped rows clipped
+// at their old height. A native input event runs Quasar's own measurement; the
+// value is unchanged, so QInput swallows it without emitting an update.
+function regrowNames() {
+  nextTick(() => {
+    for (const input of refs.name.values()) {
+      input?.nativeEl?.dispatchEvent(new Event('input'))
+    }
+  })
 }
 
 // ---- history (local only) ----
@@ -261,12 +274,14 @@ function onNameTitleEnter(e) {
 // ---- column visibility (per-list, persisted) ----
 async function toggleColumn(flag, field) {
   flag.value = !flag.value
+  regrowNames()
   saveStatus.value = 'Saving…'
   try {
     await api.put(`shopping-list?list_id=${listId}`, { [field]: flag.value })
     saveStatus.value = 'Saved'
   } catch {
     flag.value = !flag.value
+    regrowNames()
     saveStatus.value = 'Save failed'
   }
 }
@@ -412,10 +427,12 @@ onMounted(async () => {
     return
   }
   window.addEventListener('keydown', onKey)
+  window.addEventListener('resize', regrowNames)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('resize', regrowNames)
   if (pendingSave) save()
   clearTimeout(saveTimer)
 })
@@ -427,6 +444,18 @@ onBeforeUnmount(() => {
 }
 .drag-handle:active {
   cursor: grabbing;
+}
+/* Long names wrap, so a row can be several lines tall. Pin the side controls to
+   a one-line-tall box at the top so they stay level with the first line of text
+   (40px = height of a dense borderless q-input holding one line). */
+.row-side {
+  align-self: flex-start;
+  height: 40px;
+}
+/* Justify the wrapped name so every full line reaches both edges, like a book.
+   The last line of an item stays flush left, as it does in print. */
+:deep(.row-name) {
+  text-align: justify;
 }
 /* :deep — the class lands on the native input inside q-input */
 :deep(.row-checked) {
