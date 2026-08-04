@@ -18,6 +18,16 @@
         flat
         round
         dense
+        icon="check_box"
+        :color="showCheckbox ? 'primary' : 'grey'"
+        @click="toggleCheckbox"
+      >
+        <q-tooltip>{{ showCheckbox ? 'Hide checkboxes' : 'Show checkboxes' }}</q-tooltip>
+      </q-btn>
+      <q-btn
+        flat
+        round
+        dense
         icon="pin"
         :color="showQuantity ? 'primary' : 'grey'"
         @click="toggleQuantity"
@@ -52,7 +62,7 @@
     <!-- Column headers -->
     <div class="row items-center text-caption text-grey q-mb-xs">
       <div style="width: 32px" />
-      <div style="width: 32px" />
+      <div v-if="showCheckbox" style="width: 32px" />
       <div class="col">Name</div>
       <div v-if="showQuantity" style="width: 56px; text-align: center">Qty</div>
       <div style="width: 20px" />
@@ -80,7 +90,12 @@
               :style="query ? 'opacity:0.3' : ''"
             />
           </q-item-section>
-          <q-item-section side style="width: 32px; min-width: 32px" class="items-center q-pl-none">
+          <q-item-section
+            v-if="showCheckbox"
+            side
+            style="width: 32px; min-width: 32px"
+            class="items-center q-pl-none"
+          >
             <q-checkbox
               :model-value="item.checked"
               dense
@@ -95,7 +110,7 @@
               v-model="item.name"
               dense
               borderless
-              :input-class="item.checked ? 'row-checked' : ''"
+              :input-class="isStruck(item) ? 'row-checked' : ''"
               @focus="beginEdit"
               @change="endEdit"
               @keydown.enter.prevent="onNameEnter(item)"
@@ -108,7 +123,7 @@
               dense
               borderless
               inputmode="numeric"
-              :input-class="item.checked ? 'text-center row-checked' : 'text-center'"
+              :input-class="isStruck(item) ? 'text-center row-checked' : 'text-center'"
               @update:model-value="(v) => onQtyInput(item, v)"
               @keypress="onQtyKeypress"
               @focus="beginEdit"
@@ -141,6 +156,7 @@ const listId = route.params.id
 
 const listName = ref('')
 const showQuantity = ref(true)
+const showCheckbox = ref(true)
 const items = ref([])
 const query = ref('')
 const saveStatus = ref('')
@@ -242,18 +258,20 @@ function onNameTitleEnter(e) {
   e.target.blur()
 }
 
-// ---- quantity visibility (per-list, persisted) ----
-async function toggleQuantity() {
-  showQuantity.value = !showQuantity.value
+// ---- column visibility (per-list, persisted) ----
+async function toggleColumn(flag, field) {
+  flag.value = !flag.value
   saveStatus.value = 'Saving…'
   try {
-    await api.put(`shopping-list?list_id=${listId}`, { show_quantity: showQuantity.value })
+    await api.put(`shopping-list?list_id=${listId}`, { [field]: flag.value })
     saveStatus.value = 'Saved'
   } catch {
-    showQuantity.value = !showQuantity.value
+    flag.value = !flag.value
     saveStatus.value = 'Save failed'
   }
 }
+const toggleQuantity = () => toggleColumn(showQuantity, 'show_quantity')
+const toggleCheckbox = () => toggleColumn(showCheckbox, 'show_checkbox')
 
 // ---- keyboard flow ----
 function onNameEnter(item) {
@@ -281,6 +299,11 @@ function onQtyInput(item, value) {
 }
 
 // ---- checked (done) state ----
+// Hiding the checkbox column also drops the strikethrough — otherwise a checked
+// row would be struck through with no way to uncheck it. The flag itself is kept.
+function isStruck(item) {
+  return showCheckbox.value && item.checked
+}
 function toggleChecked(item, value) {
   record()
   item.checked = !!value
@@ -374,6 +397,7 @@ onMounted(async () => {
     const { data } = await api.get(`shopping-list?list_id=${listId}`)
     listName.value = data.name
     showQuantity.value = data.show_quantity ?? true
+    showCheckbox.value = data.show_checkbox ?? true
     items.value = data.items.map((i) => ({
       name: i.name,
       quantity: i.quantity ?? '',

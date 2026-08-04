@@ -63,6 +63,7 @@ class ShoppingListController extends Controller
         $data = $request->validate([
             'name' => 'sometimes|required|string|max:255',
             'show_quantity' => 'sometimes|boolean',
+            'show_checkbox' => 'sometimes|boolean',
             'items' => 'sometimes|array',
             'items.*.name' => 'nullable|string|max:255',
             'items.*.quantity' => 'nullable|string|max:255',
@@ -78,6 +79,10 @@ class ShoppingListController extends Controller
 
             if (array_key_exists('show_quantity', $data)) {
                 $list->update(['show_quantity' => $data['show_quantity']]);
+            }
+
+            if (array_key_exists('show_checkbox', $data)) {
+                $list->update(['show_checkbox' => $data['show_checkbox']]);
             }
 
             if (array_key_exists('items', $data)) {
@@ -116,6 +121,7 @@ class ShoppingListController extends Controller
             'id' => $list->id,
             'name' => $list->name,
             'show_quantity' => $list->show_quantity ?? true,
+            'show_checkbox' => $list->show_checkbox ?? true,
             'items' => $list->items()->get(['id', 'name', 'quantity', 'checked', 'position']),
         ];
     }
