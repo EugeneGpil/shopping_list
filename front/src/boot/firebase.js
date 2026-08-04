@@ -18,4 +18,6 @@ export const auth = getAuth(app)
 export default defineBoot(async () => {
   const authStore = useAuthStore()
   await authStore.init()
+  // If the token exchange was skipped because we booted offline, pick it up on reconnect.
+  window.addEventListener('online', () => authStore.retrySync())
 })
