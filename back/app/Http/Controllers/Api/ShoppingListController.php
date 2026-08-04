@@ -66,6 +66,7 @@ class ShoppingListController extends Controller
             'items' => 'sometimes|array',
             'items.*.name' => 'nullable|string|max:255',
             'items.*.quantity' => 'nullable|string|max:255',
+            'items.*.checked' => 'nullable|boolean',
         ]);
 
         $list = $this->findOwned($request);
@@ -85,6 +86,7 @@ class ShoppingListController extends Controller
                     $list->items()->create([
                         'name' => $item['name'] ?? '',
                         'quantity' => $item['quantity'] ?? null,
+                        'checked' => $item['checked'] ?? false,
                         'position' => $position,
                     ]);
                 }
@@ -114,7 +116,7 @@ class ShoppingListController extends Controller
             'id' => $list->id,
             'name' => $list->name,
             'show_quantity' => $list->show_quantity ?? true,
-            'items' => $list->items()->get(['id', 'name', 'quantity', 'position']),
+            'items' => $list->items()->get(['id', 'name', 'quantity', 'checked', 'position']),
         ];
     }
 }

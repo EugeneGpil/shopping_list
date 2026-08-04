@@ -52,6 +52,7 @@
     <!-- Column headers -->
     <div class="row items-center text-caption text-grey q-mb-xs">
       <div style="width: 32px" />
+      <div style="width: 32px" />
       <div class="col">Name</div>
       <div v-if="showQuantity" style="width: 56px; text-align: center">Qty</div>
       <div style="width: 20px" />
@@ -79,12 +80,22 @@
               :style="query ? 'opacity:0.3' : ''"
             />
           </q-item-section>
+          <q-item-section side style="width: 32px; min-width: 32px" class="items-center q-pl-none">
+            <q-checkbox
+              :model-value="item.checked"
+              dense
+              size="sm"
+              tabindex="-1"
+              @update:model-value="(v) => toggleChecked(item, v)"
+            />
+          </q-item-section>
           <q-item-section>
             <q-input
               :ref="(el) => setRef('name', item._key, el)"
               v-model="item.name"
               dense
               borderless
+              :input-class="item.checked ? 'row-checked' : ''"
               @focus="beginEdit"
               @change="endEdit"
               @keydown.enter.prevent="onNameEnter(item)"
@@ -97,7 +108,7 @@
               dense
               borderless
               inputmode="numeric"
-              input-class="text-center"
+              :input-class="item.checked ? 'text-center row-checked' : 'text-center'"
               @update:model-value="(v) => onQtyInput(item, v)"
               @keypress="onQtyKeypress"
               @focus="beginEdit"
@@ -155,7 +166,7 @@ const canRedo = computed(() => future.value.length > 0)
 
 const clone = (arr) => arr.map((r) => ({ ...r }))
 const serialize = (arr) =>
-  JSON.stringify(arr.map((r) => ({ name: r.name, quantity: r.quantity })))
+  JSON.stringify(arr.map((r) => ({ name: r.name, quantity: r.quantity, checked: r.checked })))
 
 function pushHistory(snapshot) {
   past.value.push(snapshot)
@@ -269,11 +280,18 @@ function onQtyInput(item, value) {
   })
 }
 
+// ---- checked (done) state ----
+function toggleChecked(item, value) {
+  record()
+  item.checked = !!value
+  scheduleSave()
+}
+
 // ---- mutations ----
 // Keep at least one (empty) row so there is always somewhere to start typing.
 function ensureRow(focus = false) {
   if (items.value.length === 0) {
-    const row = { name: '', quantity: '', _key: nextKey() }
+    const row = { name: '', quantity: '', checked: false, _key: nextKey() }
     items.value.push(row)
     scheduleSave()
     if (focus) focusField('name', row._key)
@@ -282,7 +300,7 @@ function ensureRow(focus = false) {
 function addRowAfter(item) {
   record()
   const idx = items.value.indexOf(item)
-  const row = { name: '', quantity: '', _key: nextKey() }
+  const row = { name: '', quantity: '', checked: false, _key: nextKey() }
   items.value.splice(idx + 1, 0, row)
   scheduleSave()
   focusField('name', row._key)
@@ -314,6 +332,7 @@ async function save() {
   const payload = items.value.map((r) => ({
     name: r.name.trim(),
     quantity: r.quantity?.trim() || null,
+    checked: !!r.checked,
   }))
   try {
     await api.put(`shopping-list?list_id=${listId}`, { items: payload })
@@ -358,6 +377,7 @@ onMounted(async () => {
     items.value = data.items.map((i) => ({
       name: i.name,
       quantity: i.quantity ?? '',
+      checked: !!i.checked,
       _key: nextKey(),
     }))
     loaded = true
@@ -383,5 +403,10 @@ onBeforeUnmount(() => {
 }
 .drag-handle:active {
   cursor: grabbing;
+}
+/* :deep — the class lands on the native input inside q-input */
+:deep(.row-checked) {
+  text-decoration: line-through;
+  opacity: 0.55;
 }
 </style>
