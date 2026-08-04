@@ -73,7 +73,9 @@ export const useAuthStore = defineStore('auth', {
 
     async _syncWithBackend(firebaseUser) {
       const idToken = await firebaseUser.getIdToken()
-      const { data: { token } } = await api.post('auth/firebase', { id_token: idToken })
+      const {
+        data: { token },
+      } = await api.post('auth/firebase', { id_token: idToken })
       localStorage.setItem(TOKEN_KEY, token)
       this.syncPending = false
     },

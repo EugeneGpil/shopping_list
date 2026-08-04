@@ -1,1 +1,14 @@
 // app global css
+
+// Autogrow fields (item names, the list title, the new-list name) must always wrap and
+// must never scroll sideways — sideways scrolling hides text with no hint that it is there.
+//
+// This cannot be left to the browser: Chromium's UA stylesheet gives `textarea` an
+// `overflow-wrap: break-word` that Gecko does not, so a word too long for the line breaks
+// in Chrome but overflows in Firefox. Quasar sets no wrapping rules of its own, so state
+// all three explicitly rather than inheriting whatever the engine happens to default to.
+textarea.q-field__native {
+  white-space: pre-wrap; // wrap at spaces
+  overflow-wrap: break-word; // and break a word that is longer than the line
+  overflow-x: hidden; // never a horizontal scrollbar
+}

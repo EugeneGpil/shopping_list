@@ -5,9 +5,11 @@
         v-model="newName"
         outlined
         dense
+        autogrow
         class="col"
         placeholder="New list name"
         maxlength="255"
+        @keydown.enter.prevent="create"
       />
       <q-btn
         type="submit"
@@ -38,12 +40,7 @@
       <template #item="{ element: list }">
         <q-item clickable v-ripple class="q-pl-none" @click="open(list.id)">
           <q-item-section side style="width: 32px; min-width: 32px" class="items-center">
-            <q-icon
-              name="drag_indicator"
-              class="drag-handle"
-              color="grey-6"
-              @click.stop
-            />
+            <q-icon name="drag_indicator" class="drag-handle" color="grey-6" @click.stop />
           </q-item-section>
           <q-item-section>
             <q-item-label>{{ list.name }}</q-item-label>
@@ -51,7 +48,9 @@
           </q-item-section>
           <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none">
             <q-btn
-              flat round dense
+              flat
+              round
+              dense
               size="sm"
               padding="none"
               tabindex="-1"
