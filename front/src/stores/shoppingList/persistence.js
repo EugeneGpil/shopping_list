@@ -3,6 +3,17 @@ import { api } from 'src/api'
 const SAVE_DEBOUNCE = 700
 
 /**
+ * The strings shown in the save indicator. Defined here because this module owns
+ * reporting; `settings.js` reports through the same `report()`. Kept in one place so
+ * the UI can tell a failure apart by identity instead of re-typing the wording.
+ */
+export const SAVE_STATUS = {
+  saving: 'Saving…',
+  saved: 'Saved',
+  failed: 'Save failed',
+}
+
+/**
  * Debounced save of the whole item list. The endpoint replaces the full item set
  * on every PUT, so there is no per-row request to make — pending edits collapse
  * into one call.
@@ -24,7 +35,7 @@ export function createPersistence({ listId, items, saveStatus }) {
   function scheduleSave() {
     if (!loaded) return
     pendingSave = true
-    saveStatus.value = 'Saving…'
+    saveStatus.value = SAVE_STATUS.saving
     clearTimeout(saveTimer)
     saveTimer = setTimeout(save, SAVE_DEBOUNCE)
   }
@@ -42,9 +53,9 @@ export function createPersistence({ listId, items, saveStatus }) {
     }))
     try {
       await api.put(`shopping-list?list_id=${id}`, { items: payload })
-      report(id, 'Saved')
+      report(id, SAVE_STATUS.saved)
     } catch {
-      report(id, 'Save failed')
+      report(id, SAVE_STATUS.failed)
     }
   }
 

@@ -1,7 +1,7 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api } from 'src/api'
-import { createPersistence } from './persistence'
+import { createPersistence, SAVE_STATUS } from './persistence'
 import { createHistory } from './history'
 import { createRows } from './rows'
 import { createSettings } from './settings'
@@ -31,6 +31,8 @@ export const useShoppingListStore = defineStore('shoppingList', () => {
   const showCheckbox = ref(true)
   const items = ref([])
   const saveStatus = ref('')
+  // So the UI can style a failure without matching on the message text.
+  const saveFailed = computed(() => saveStatus.value === SAVE_STATUS.failed)
 
   const persistence = createPersistence({ listId, items, saveStatus })
 
@@ -94,6 +96,7 @@ export const useShoppingListStore = defineStore('shoppingList', () => {
     showCheckbox,
     items,
     saveStatus,
+    saveFailed,
     canUndo: history.canUndo,
     canRedo: history.canRedo,
     // lifecycle

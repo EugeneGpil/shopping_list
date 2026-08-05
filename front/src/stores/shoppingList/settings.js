@@ -1,4 +1,5 @@
 import { api } from 'src/api'
+import { SAVE_STATUS } from './persistence'
 
 /**
  * Per-list settings that are saved immediately rather than debounced: the list
@@ -30,26 +31,26 @@ export function createSettings({
     listName.value = name
     if (name === nameSnapshot) return
     const id = listId.value
-    saveStatus.value = 'Saving…'
+    saveStatus.value = SAVE_STATUS.saving
     try {
       await api.put(`shopping-list?list_id=${id}`, { name })
-      report(id, 'Saved')
+      report(id, SAVE_STATUS.saved)
     } catch {
       listName.value = nameSnapshot
-      report(id, 'Save failed')
+      report(id, SAVE_STATUS.failed)
     }
   }
 
   async function toggleColumn(flag, field) {
     flag.value = !flag.value
     const id = listId.value
-    saveStatus.value = 'Saving…'
+    saveStatus.value = SAVE_STATUS.saving
     try {
       await api.put(`shopping-list?list_id=${id}`, { [field]: flag.value })
-      report(id, 'Saved')
+      report(id, SAVE_STATUS.saved)
     } catch {
       flag.value = !flag.value
-      report(id, 'Save failed')
+      report(id, SAVE_STATUS.failed)
     }
   }
 

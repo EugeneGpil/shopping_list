@@ -2,10 +2,6 @@
   <q-page class="q-pa-md" style="max-width: 720px; margin: 0 auto">
     <ShoppingListHeader @back="goBack" />
 
-    <div class="text-caption text-grey q-mb-sm" style="height: 16px">
-      {{ store.saveStatus }}
-    </div>
-
     <!-- Search -->
     <q-input
       v-model="query"
@@ -19,13 +15,14 @@
       <template #prepend><q-icon name="search" /></template>
     </q-input>
 
-    <!-- Column headers -->
-    <div class="row items-center text-caption text-grey q-mb-xs">
-      <div style="width: 32px" />
-      <div v-if="store.showCheckbox" style="width: 32px" />
-      <div class="col">Name</div>
-      <div v-if="store.showQuantity" style="width: 56px; text-align: center">Qty</div>
-      <div style="width: 20px" />
+    <!-- Save feedback. Fixed rather than in the page flow, so it takes up no space and can
+         never shift the list — which is also why `v-if` is safe here. -->
+    <div
+      v-if="store.saveStatus"
+      class="save-status text-caption"
+      :class="store.saveFailed ? 'save-status--failed text-negative' : 'text-grey'"
+    >
+      {{ store.saveStatus }}
     </div>
 
     <!-- Rows -->
@@ -137,6 +134,20 @@ async function goBack() {
   router.push('/')
 }
 
+// An edit is only committed when the field loses focus, so typing and then closing the
+// app — or just switching away from it — would otherwise discard the text with no hint
+// that anything was unsaved. Blurring first runs the ordinary commit path (`change` ->
+// `endEdit` -> scheduled save), so the edit also becomes one undo step exactly as it
+// would have; `flush` then pushes it out instead of waiting on the debounce.
+//
+// `visibilitychange` is the signal that actually fires when a phone backgrounds or
+// closes a PWA; `pagehide` covers a desktop tab close.
+async function persistBeforeHide() {
+  if (document.visibilityState !== 'hidden') return
+  document.activeElement?.blur?.()
+  await store.flush()
+}
+
 function onKey(e) {
   if (!(e.ctrlKey || e.metaKey)) return
   const k = e.key.toLowerCase()
@@ -176,11 +187,37 @@ watch(() => route.params.id, openList)
 onMounted(() => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('resize', regrowNames)
+  document.addEventListener('visibilitychange', persistBeforeHide)
+  window.addEventListener('pagehide', persistBeforeHide)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', regrowNames)
+  document.removeEventListener('visibilitychange', persistBeforeHide)
+  window.removeEventListener('pagehide', persistBeforeHide)
   store.stopSaving()
 })
 </script>
+
+<style scoped>
+/* Out of the flow entirely: transient feedback should never move the list under the
+   user's finger. The backdrop keeps it legible when it lands over a row. */
+.save-status {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+  pointer-events: none;
+}
+/* A failure is the one state worth interrupting for: unlike "Saved" it does not clear
+   itself, so give it weight and a tinted background rather than colour alone. */
+.save-status--failed {
+  font-weight: 500;
+  background: #fdecee;
+  box-shadow: 0 1px 4px rgba(193, 0, 21, 0.28);
+}
+</style>
