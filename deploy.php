@@ -33,7 +33,8 @@ set('shared_dirs', []);
 // Shared dirs are already owned by the deploy user; skip the ACL/chmod pass.
 set('writable_dirs', []);
 
-set('compose_services', 'nginx php postgres');
+// `scheduler` runs Laravel's scheduler in-container, so the server needs no crontab.
+set('compose_services', 'nginx php postgres scheduler');
 
 /**
  * One definition, used by both the deploy and the recovery path — they must not

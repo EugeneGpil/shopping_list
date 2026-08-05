@@ -1,3 +1,22 @@
+# `php` and `scheduler` are the same image with the same code, .env and storage mounted —
+# they differ only in what they run. Defined once so the two cannot drift apart.
+x-php: &php
+  image: shopping_list-php
+  build:
+    context: ./docker/php
+    args:
+      USER_ID: ${USER_ID:-1000}
+      GROUP_ID: ${GROUP_ID:-1000}
+  volumes:
+    - ./back:/var/www/html
+    - ${SHARED_PATH:-.}/back/.env:/var/www/html/.env
+    - ${SHARED_PATH:-.}/back/storage:/var/www/html/storage
+    - ${SHARED_PATH:-.}/docker/volumes/php_home:/home/app
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   nginx:
     image: nginx:1.30.0-trixie
@@ -14,21 +33,14 @@ services:
     restart: unless-stopped
 
   php:
-    image: shopping_list-php
-    build:
-      context: ./docker/php
-      args:
-        USER_ID: ${USER_ID:-1000}
-        GROUP_ID: ${GROUP_ID:-1000}
-    volumes:
-      - ./back:/var/www/html
-      - ${SHARED_PATH:-.}/back/.env:/var/www/html/.env
-      - ${SHARED_PATH:-.}/back/storage:/var/www/html/storage
-      - ${SHARED_PATH:-.}/docker/volumes/php_home:/home/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+    <<: *php
+
+  # Laravel's scheduler, in-container so no host cron is needed and the environment is
+  # reproducible anywhere `docker compose up` runs. `schedule:work` stays in the
+  # foreground and dispatches whatever routes/console.php has due each minute.
+  scheduler:
+    <<: *php
+    command: php artisan schedule:work
 
   postgres:
     image: postgres:18.3-bookworm
