@@ -29,34 +29,31 @@
 
       <ShoppingListSaveStatus />
 
-      <!-- Rows -->
+      <!-- Rows. `update:model-value` rather than `v-model`, so the reordered array goes
+           back through an action instead of being written into the store from here. -->
       <draggable
-        v-model="store.items"
+        :model-value="store.items"
         item-key="_key"
         handle=".drag-handle"
         :animation="150"
         :disabled="!!query"
         :force-fallback="true"
         class="q-list q-list--bordered q-list--separator rounded-borders"
+        @update:model-value="store.reorder"
         @start="store.beginDrag"
         @end="store.endDrag"
       >
-        <template #item="{ element: item }">
+        <!-- The row reads its own data out of the store, so it only needs to be told
+             where it sits. `element` is still used here for the two things that are not
+             the row's own business: whether the search hides it, and its focus ref. -->
+        <template #item="{ element: item, index }">
           <ShoppingListRow
             v-show="matchesQuery(item)"
             :ref="(el) => setRowRef(item._key, el)"
-            :item="item"
-            :show-quantity="store.showQuantity"
-            :show-checkbox="store.showCheckbox"
+            :index="index"
             :searching="!!query"
-            @update:name="(v) => (item.name = v)"
-            @update:quantity="(v) => (item.quantity = v)"
-            @toggle-checked="(v) => store.toggleChecked(item, v)"
-            @edit-start="store.beginEdit"
-            @edit-end="store.endEdit"
-            @name-enter="onNameEnter(item)"
-            @qty-enter="focusName(store.addRowAfter(item))"
-            @remove="store.removeRow(item)"
+            @name-enter="onNameEnter(item, index)"
+            @qty-enter="focusName(store.addRowAfter(index))"
           />
         </template>
       </draggable>
@@ -95,12 +92,12 @@ import ShoppingListUnavailable from 'src/components/ShoppingListUnavailable.vue'
 import { useRowRefs } from 'src/composables/useRowRefs'
 import { useUndoRedoShortcuts } from 'src/composables/useUndoRedoShortcuts'
 import { useFlushOnHide } from 'src/composables/useFlushOnHide'
-import { useShoppingListStore } from 'src/stores/shoppingList'
+import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { isNetworkError } from 'src/api'
 
 const route = useRoute()
 const router = useRouter()
-const store = useShoppingListStore()
+const store = useShoppingListsStore()
 
 const query = ref('')
 const loadFailed = ref(false)
@@ -116,9 +113,9 @@ useFlushOnHide(store.flush)
 // when a failed save reverts it.
 watch([() => store.showQuantity, () => store.showCheckbox], regrowNames)
 
-function onNameEnter(item) {
+function onNameEnter(item, index) {
   if (store.showQuantity) focusQty(item._key)
-  else focusName(store.addRowAfter(item))
+  else focusName(store.addRowAfter(index))
 }
 
 // ---- search ----
@@ -134,19 +131,15 @@ async function goBack() {
 }
 
 // ---- opening a list ----
+//
+// The store owns the switch itself — firing the outgoing list's pending save, resetting
+// its history, and either serving the new list from cache or fetching it. All this page
+// decides is where a failure sends the user.
 async function openList(id) {
-  // Switching straight from one list to another does not unmount this page, so the
-  // outgoing list's debounced save has to be fired here or it would be dropped by
-  // the reset below. `save()` captures its list id and payload synchronously.
-  store.stopSaving()
-  // reset() is synchronous, so the previously opened list is gone before anything
-  // renders — the store outlives this page and would otherwise flash A's rows
-  // while B is still loading.
-  store.reset()
   loadFailed.value = false
   loading.value = true
   try {
-    focusName(await store.load(id))
+    focusName(await store.open(id))
   } catch (err) {
     // Two very different failures land here. A response — 404, or 403 for someone
     // else's list — is the server's final word, and bouncing home is right. A
@@ -167,7 +160,8 @@ function retry() {
   if (!loading.value) openList(route.params.id)
 }
 
-// Started here rather than in onMounted so the reset lands before the first render.
+// Started here rather than in onMounted so a cached list is already on screen at the
+// first render, with no empty frame in between.
 openList(route.params.id)
 
 // vue-router reuses this component for /list/1 -> /list/2, so onMounted does not

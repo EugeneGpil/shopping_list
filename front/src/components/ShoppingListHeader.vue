@@ -7,12 +7,13 @@
       <q-btn flat round dense icon="arrow_back" class="header-btn" @click="emit('back')" />
       <q-input
         ref="titleInput"
-        v-model="store.listName"
+        :model-value="store.listName"
         dense
         borderless
         autogrow
         class="col q-ml-sm"
         input-class="text-h6 text-weight-bold"
+        @update:model-value="store.setListName"
         @focus="store.beginNameEdit"
         @change="store.saveName"
         @keydown.enter.prevent="onTitleEnter"
@@ -69,12 +70,12 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useShoppingListStore } from 'src/stores/shoppingList'
+import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 // Navigation stays with the page — it owns the router and the flush-before-leave.
 const emit = defineEmits(['back'])
 
-const store = useShoppingListStore()
+const store = useShoppingListsStore()
 
 const titleInput = ref(null)
 

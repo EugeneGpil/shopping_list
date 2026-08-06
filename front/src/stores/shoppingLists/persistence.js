@@ -14,26 +14,19 @@ export const SAVE_STATUS = {
 }
 
 /**
- * Debounced save of the whole item list. The endpoint replaces the full item set
- * on every PUT, so there is no per-row request to make — pending edits collapse
- * into one call.
+ * Debounced save of the open list's whole item set. The endpoint replaces the full set
+ * on every PUT, so there is no per-row request to make — pending edits collapse into
+ * one call.
  *
- * Owns the debounce timer and the loaded flag. Nothing else may touch them; use
- * `markLoaded()` after the initial fetch and `reset()` when the list changes.
+ * Owns the debounce timer. Nothing else may touch it.
  */
-export function createPersistence({ listId, items, saveStatus }) {
+export function createPersistence({ current, openId, saveStatus, isLoaded, touch }) {
   let saveTimer = null
   let pendingSave = false
-  // nothing is saved until the initial GET has populated `items`, or the first
-  // debounce would push an empty list over the top of real data
-  let loaded = false
-
-  function markLoaded() {
-    loaded = true
-  }
 
   function scheduleSave() {
-    if (!loaded) return
+    if (!isLoaded()) return
+    touch()
     pendingSave = true
     saveStatus.value = SAVE_STATUS.saving
     clearTimeout(saveTimer)
@@ -43,10 +36,10 @@ export function createPersistence({ listId, items, saveStatus }) {
   async function save() {
     clearTimeout(saveTimer)
     pendingSave = false
-    // capture the target list and payload up front: the page may navigate away
-    // mid-flight, and this save still belongs to the list it was queued for
-    const id = listId.value
-    const payload = items.value.map((r) => ({
+    // Capture the target list and payload up front: the page may navigate away
+    // mid-flight, and this save still belongs to the list it was queued for.
+    const id = openId.value
+    const payload = (current.value?.items ?? []).map((r) => ({
       name: r.name.trim(),
       quantity: r.quantity?.trim() || null,
       checked: !!r.checked,
@@ -61,7 +54,7 @@ export function createPersistence({ listId, items, saveStatus }) {
 
   /** Only report a result if that list is still the one on screen. */
   function report(id, status) {
-    if (listId.value === id) saveStatus.value = status
+    if (openId.value === id) saveStatus.value = status
   }
 
   /** Await any pending save — use before navigating away. */
@@ -79,8 +72,7 @@ export function createPersistence({ listId, items, saveStatus }) {
     clearTimeout(saveTimer)
     saveTimer = null
     pendingSave = false
-    loaded = false
   }
 
-  return { scheduleSave, save, flush, stopSaving, report, markLoaded, reset }
+  return { scheduleSave, save, flush, stopSaving, report, reset }
 }

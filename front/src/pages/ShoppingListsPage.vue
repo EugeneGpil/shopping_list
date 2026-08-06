@@ -16,7 +16,8 @@
         color="primary"
         icon="add"
         label="Create"
-        :disable="!newName.trim()"
+        :disable="!newName.trim() || creating"
+        :loading="creating"
         unelevated
       />
       <q-btn flat round icon="logout" @click="onLogout" />
@@ -24,18 +25,36 @@
 
     <q-inner-loading :showing="loading" />
 
-    <div v-if="!loading && lists.length === 0" class="text-grey text-center q-mt-xl">
+    <!-- Only reachable with nothing cached to fall back on: with lists in the store they
+         are shown instead, stale at worst. -->
+    <div v-if="loadFailed && !store.lists.length" class="text-center q-mt-xl">
+      <q-icon name="cloud_off" size="48px" color="grey-6" />
+      <div class="text-subtitle1 q-mt-sm">Can't load your lists</div>
+      <q-btn
+        outline
+        no-caps
+        color="primary"
+        label="Retry"
+        class="q-mt-md"
+        :loading="loading"
+        @click="load"
+      />
+    </div>
+
+    <div v-else-if="!loading && !store.lists.length" class="text-grey text-center q-mt-xl">
       No lists yet. Create your first one above.
     </div>
 
+    <!-- `update:model-value` rather than `v-model`: the new order goes back through an
+         action, which is also what persists it. -->
     <draggable
-      v-model="lists"
+      :model-value="store.lists"
       item-key="id"
       handle=".drag-handle"
       :animation="150"
       :force-fallback="true"
       class="q-list q-list--bordered q-list--separator rounded-borders"
-      @end="persistOrder"
+      @update:model-value="store.reorderLists"
     >
       <template #item="{ element: list }">
         <q-item clickable v-ripple class="q-pl-none" @click="open(list.id)">
@@ -70,22 +89,30 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
-import { api } from 'src/api'
+import { isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
+import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 const router = useRouter()
 const $q = useQuasar()
 const authStore = useAuthStore()
+const store = useShoppingListsStore()
 
-const lists = ref([])
 const newName = ref('')
 const loading = ref(false)
+const creating = ref(false)
+const loadFailed = ref(false)
 
 async function load() {
   loading.value = true
+  loadFailed.value = false
   try {
-    const { data } = await api.get('shopping-lists')
-    lists.value = data
+    await store.fetchLists()
+  } catch (err) {
+    // Offline with lists already in the store: keep showing them. They are the same
+    // records the editor works on, so at worst they are a little stale — while an empty
+    // page would suggest the lists are gone.
+    if (!isNetworkError(err) || !store.lists.length) loadFailed.value = true
   } finally {
     loading.value = false
   }
@@ -93,19 +120,23 @@ async function load() {
 
 async function create() {
   const name = newName.value.trim()
-  if (!name) return
-  const { data } = await api.post('shopping-lists', { name })
-  newName.value = ''
-  router.push(`/list/${data.id}`)
+  if (!name || creating.value) return
+  creating.value = true
+  try {
+    const list = await store.createList(name)
+    newName.value = ''
+    router.push(`/list/${list.id}`)
+  } catch {
+    // Nothing was created, so there is nothing to undo — keep the typed name so the
+    // button can simply be pressed again.
+    $q.notify({ type: 'negative', message: 'Could not create the list.' })
+  } finally {
+    creating.value = false
+  }
 }
 
 function open(id) {
   router.push(`/list/${id}`)
-}
-
-async function persistOrder() {
-  const ids = lists.value.map((l) => l.id)
-  await api.put('shopping-lists/order', { ids }).catch(() => {})
 }
 
 function remove(list) {
@@ -115,13 +146,19 @@ function remove(list) {
     cancel: true,
     ok: { label: 'Delete', color: 'negative' },
   }).onOk(async () => {
-    await api.del(`shopping-list?list_id=${list.id}`)
-    lists.value = lists.value.filter((l) => l.id !== list.id)
+    try {
+      await store.deleteList(list.id)
+    } catch {
+      $q.notify({ type: 'negative', message: 'Could not delete the list.' })
+    }
   })
 }
 
 async function onLogout() {
   await authStore.logout()
+  // The lists outlive this page, so they have to go explicitly — otherwise the next
+  // person to sign in sees them until their own fetch lands.
+  store.clear()
   router.push('/login')
 }
 

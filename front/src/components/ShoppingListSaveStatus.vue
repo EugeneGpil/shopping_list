@@ -11,10 +11,10 @@
 </template>
 
 <script setup>
-import { useShoppingListStore } from 'src/stores/shoppingList'
+import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 // Read straight from the store, as the header does: the status has no input from the page.
-const store = useShoppingListStore()
+const store = useShoppingListsStore()
 </script>
 
 <style scoped>

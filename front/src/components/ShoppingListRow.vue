@@ -9,7 +9,7 @@
       />
     </q-item-section>
     <q-item-section
-      v-if="showCheckbox"
+      v-if="store.showCheckbox"
       side
       style="width: 32px; min-width: 32px"
       class="items-center q-pl-none row-side"
@@ -19,7 +19,7 @@
         dense
         size="sm"
         tabindex="-1"
-        @update:model-value="(v) => emit('toggle-checked', v)"
+        @update:model-value="(v) => store.toggleChecked(index, v)"
       />
     </q-item-section>
     <q-item-section>
@@ -30,14 +30,14 @@
         borderless
         autogrow
         :input-class="struck ? 'row-name row-checked' : 'row-name'"
-        @update:model-value="(v) => emit('update:name', v)"
-        @focus="emit('edit-start')"
-        @change="emit('edit-end')"
+        @update:model-value="(v) => store.setName(index, v)"
+        @focus="store.beginEdit"
+        @change="store.endEdit"
         @keydown.enter.prevent="emit('name-enter')"
       />
     </q-item-section>
     <q-item-section
-      v-if="showQuantity"
+      v-if="store.showQuantity"
       top
       side
       style="width: 56px; min-width: 56px"
@@ -52,8 +52,8 @@
         :input-class="struck ? 'text-center row-checked' : 'text-center'"
         @update:model-value="onQtyInput"
         @keypress="onQtyKeypress"
-        @focus="emit('edit-start')"
-        @change="emit('edit-end')"
+        @focus="store.beginEdit"
+        @change="store.endEdit"
         @keydown.enter.prevent="emit('qty-enter')"
       />
     </q-item-section>
@@ -67,7 +67,7 @@
         tabindex="-1"
         icon="delete"
         color="negative"
-        @click="emit('remove')"
+        @click="store.removeRow(index)"
       />
     </q-item-section>
   </q-item>
@@ -75,42 +75,47 @@
 
 <script setup>
 import { ref, computed, nextTick } from 'vue'
+import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 const props = defineProps({
-  item: { type: Object, required: true },
-  showQuantity: { type: Boolean, default: true },
-  showCheckbox: { type: Boolean, default: true },
-  // dims the drag handle while a search is filtering the list (reorder is off then)
+  // Where this row sits in `store.items`. It reads its data from there and names the
+  // same position back in every action it calls, so the index is all the page has to
+  // hand over.
+  //
+  // Bound from vuedraggable's slot index, which is what makes it survive a reorder: the
+  // component is keyed by `_key` so the instance follows its row, and a row that moved
+  // gets the new index that resolves back to the same item.
+  index: { type: Number, required: true },
+  // Page state rather than list data, so it stays a prop: dims the drag handle while a
+  // search is filtering the list, because reordering is disabled then.
   searching: { type: Boolean, default: false },
 })
 
-const emit = defineEmits([
-  'update:name',
-  'update:quantity',
-  'toggle-checked',
-  'edit-start',
-  'edit-end',
-  'name-enter',
-  'qty-enter',
-  'remove',
-])
+// Only Enter is the page's business — it moves focus to another row, or appends one and
+// focuses that, and focus across rows is the page's job. Everything else this row does
+// is a store call it can make itself.
+const emit = defineEmits(['name-enter', 'qty-enter'])
+
+const store = useShoppingListsStore()
+
+// Read straight from the store, as the header and the save indicator do. Writes go back
+// through actions — this row holds no copy of its data.
+const item = computed(() => store.items[props.index])
 
 const nameInput = ref(null)
 const qtyInput = ref(null)
 
 // Hiding the checkbox column also drops the strikethrough — otherwise a checked
 // row would be struck through with no way to uncheck it. The flag itself is kept.
-const struck = computed(() => props.showCheckbox && props.item.checked)
+const struck = computed(() => store.showCheckbox && item.value.checked)
 
-// quantity accepts positive integers only ("" allowed = no quantity)
+// Reject non-digits at the keystroke, so the caret never jumps; the store sanitizes
+// whatever still gets in (a paste, an IME) and hands back what it stored.
 function onQtyKeypress(e) {
   if (!/[0-9]/.test(e.key)) e.preventDefault()
 }
 function onQtyInput(value) {
-  const digits = String(value ?? '')
-    .replace(/[^0-9]/g, '')
-    .replace(/^0+/, '')
-  emit('update:quantity', digits)
+  const digits = store.setQuantity(props.index, value)
   // force the DOM to reflect the sanitized value even when the model is unchanged
   // (e.g. pasting "abc" collapses to "" which equals the previous model value)
   nextTick(() => {
