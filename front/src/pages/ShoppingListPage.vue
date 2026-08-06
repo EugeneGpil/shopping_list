@@ -110,8 +110,8 @@ useUndoRedoShortcuts(store)
 useFlushOnHide(store.flush)
 
 // Toggling a column changes the name column's width, and Quasar's `autogrow` only
-// re-measures on input — so re-measure whenever either toggle lands, including
-// when a failed save reverts it.
+// re-measures on input — so re-measure whenever either toggle lands, including when it
+// lands because a newer copy of the list arrived from the server.
 watch([() => store.showQuantity, () => store.showCheckbox], regrowNames)
 
 function onNameEnter(item, index) {

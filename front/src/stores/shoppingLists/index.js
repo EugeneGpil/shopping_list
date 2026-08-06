@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
@@ -7,42 +7,56 @@ import { createPersistence, SAVE_STATUS } from './persistence'
 import { createHistory } from './history'
 import { createRows } from './rows'
 import { createSettings } from './settings'
+import { createSync } from './sync'
+import { isTemp, recordFromApi, seedTempIds } from './record'
+import { clearState, readState, writeState } from './storage'
+
+// Long enough that a burst of keystrokes is one write, short enough that a phone killed
+// straight after typing still has it.
+const PERSIST_DEBOUNCE = 300
 
 /**
  * Every shopping list the app knows about, and everything that changes one.
  *
- * `lists` is the single source of truth for both pages: the index page renders each
- * record's `name` and `items_count`, the editor page renders the `items` of whichever
- * record `openId` points at. There is one object per list and it is never copied, so a
- * rename made in the editor is already correct on the index.
+ * `lists` is the single source of truth for both pages: the index renders each record's
+ * `name` and `items_count`, the editor renders the `items` of whichever record `openId`
+ * points at. There is one object per list and it is never copied, so a rename made in the
+ * editor is already correct on the index.
  *
- * `items: null` means "not fetched yet", which is deliberately different from a list
- * that has no items. Once fetched, items stay cached for the session: switching lists
- * is then instant, and — unlike the single-open-list store this replaces — opening
- * list B can no longer flash list A's rows or let A's pending save land on B, because
- * each list's rows live under its own record instead of in one shared slot.
+ * **The UI reads and writes this store, never the network.** Local state is authoritative
+ * and mirrored into localStorage on every change, so the app works offline and across a
+ * restart; `sync.js` gets it to the server whenever that is possible. A change therefore
+ * never fails — it is only "not on the server yet", which is what `dirty` means. See
+ * `record.js` for the bookkeeping each record carries and `docs/go_offline.md` for the
+ * plan this implements.
  *
- * Components never write to any of this. Every mutation is an action here, which is
- * what keeps the undo snapshot and the debounced save impossible to bypass.
+ * `items: null` means "not fetched yet", which is deliberately different from a list that
+ * has no items. Once fetched, items stay cached: switching lists is instant, and — unlike
+ * the single-open-list store this replaces — opening list B cannot flash list A's rows or
+ * let A's pending save land on B, because each list's rows live under its own record.
  *
- * Split by concern, one module each: the lists collection, the debounced save, undo/
- * redo, the rows, and the per-list settings. Each owns its internals (the save timer,
- * the history stacks, the key counter, the name snapshot) and exposes its own
- * `reset()`, which is why the roll-call below is short. Dependencies run one way and
- * are visible in the wiring: everything sits on top of `current`.
+ * Split by concern, one module each: the collection, the local write path, undo/redo, the
+ * rows, the per-list settings, and the sync engine. Each owns its internals (the save
+ * timer, the history stacks, the name snapshot) and exposes its own `reset()`.
  */
 export const useShoppingListsStore = defineStore('shoppingLists', () => {
   const lists = ref([])
+  // The order differs from the server's and has not been sent yet. One flag for the whole
+  // collection, because the endpoint takes the whole order in one call.
+  const orderDirty = ref(false)
   const openId = ref(null)
   const saveStatus = ref('')
-  // So the UI can style a failure without matching on the message text.
-  const saveFailed = computed(() => saveStatus.value === SAVE_STATUS.failed)
+  // The two states worth interrupting for: a real failure, and an edit that lost to a
+  // newer copy. "Saved on this device" is not one of them — that is normal offline life.
+  const saveFailed = computed(
+    () => saveStatus.value === SAVE_STATUS.failed || saveStatus.value === SAVE_STATUS.conflict,
+  )
 
   /** The open list's record, or null when nothing is open. */
   const current = computed(() => lists.value.find((l) => l.id === openId.value) ?? null)
 
-  /** Nothing may be saved before the items have been fetched, or a first debounce
-   *  would PUT an empty list over real data. */
+  /** Nothing may be saved before the items have been fetched, or a first debounce would
+   *  PUT an empty list over real data. */
   const isLoaded = () => current.value?.items != null
 
   // Read-only facades over the open record, for rendering. Every write is an action.
@@ -51,13 +65,66 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
   const showQuantity = computed(() => current.value?.show_quantity ?? true)
   const showCheckbox = computed(() => current.value?.show_checkbox ?? true)
 
+  /** Tombstoned lists stay in `lists` until the server agrees, but are not shown. */
+  const visibleLists = computed(() => lists.value.filter((l) => !l.pendingDelete))
+  /** Changes waiting for a connection, for the "not synced yet" indicator. */
+  const pendingCount = computed(
+    () => lists.value.filter((l) => l.dirty || l.pendingDelete).length + (orderDirty.value ? 1 : 0),
+  )
+
   // Cleared by the first thing the user does to the open list; see `revalidate()`.
   let pristine = false
   const touch = () => {
     pristine = false
   }
+  const markDirty = () => {
+    if (current.value) current.value.dirty = true
+  }
 
-  const persistence = createPersistence({ current, openId, saveStatus, isLoaded, touch })
+  // ---- local persistence ----
+  //
+  // Written through on every change rather than only when offline: `navigator.onLine` lies
+  // (a connected wifi with no internet reports true), and a PWA is killed while online
+  // just as often as offline. One code path, and crash safety for free.
+
+  const uid = () => useAuthStore().user?.uid
+
+  const persisted = readState(uid())
+  if (persisted) {
+    lists.value = persisted.lists
+    orderDirty.value = persisted.orderDirty
+    seedTempIds(lists.value)
+  }
+
+  let persistTimer = null
+  watch(
+    [lists, orderDirty],
+    () => {
+      clearTimeout(persistTimer)
+      persistTimer = setTimeout(
+        () => writeState(uid(), { lists: lists.value, orderDirty: orderDirty.value }),
+        PERSIST_DEBOUNCE,
+      )
+    },
+    // Synchronous so the timer is armed by the mutation itself rather than a microtask
+    // later. `clear()` relies on that: it cancels the timer after emptying the store, and a
+    // watcher that had not run yet would re-arm afterwards and write the empty state back.
+    { deep: true, flush: 'sync' },
+  )
+
+  // ---- wiring ----
+
+  const sync = createSync({ lists, orderDirty, forget })
+
+  const persistence = createPersistence({
+    current,
+    openId,
+    saveStatus,
+    isLoaded,
+    touch,
+    markDirty,
+    pushList: sync.pushList,
+  })
 
   const history = createHistory({
     current,
@@ -69,84 +136,73 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     current,
     record: history.record,
     scheduleSave: persistence.scheduleSave,
+    markDirty,
   })
 
-  const settings = createSettings({
-    current,
-    openId,
-    saveStatus,
-    report: persistence.report,
+  const settings = createSettings({ current, save: persistence.save })
+
+  const collection = createCollection({
+    lists,
+    orderDirty,
+    pushDelete: sync.pushDelete,
+    pushOrder: sync.pushOrder,
   })
 
-  const collection = createCollection({ lists, upsert })
-
-  /** Merge a freshly fetched record into `lists`, keeping the existing object identity
-   *  so anything already rendering it follows along. */
-  function upsert(record) {
-    const known = lists.value.find((l) => l.id === record.id)
-    if (known) Object.assign(known, record)
-    else lists.value.push(record)
-    return record
-  }
+  const find = (id) => lists.value.find((l) => l.id === id)
 
   function forget(id) {
     lists.value = lists.value.filter((l) => l.id !== id)
   }
 
-  /** GET one list, with its items turned into rows. */
-  async function fetchOne(id) {
-    const { data } = await api.get(`shopping-list?list_id=${id}`)
-    return {
-      id: data.id,
-      name: data.name,
-      show_quantity: data.show_quantity ?? true,
-      show_checkbox: data.show_checkbox ?? true,
-      // Kept in step with the items we just received, so a list reached by URL before
-      // the index has ever been fetched still has a count to show.
-      items_count: data.items.length,
-      items: data.items.map((i) =>
-        rows.createRow({ name: i.name, quantity: i.quantity ?? '', checked: !!i.checked }),
-      ),
-    }
-  }
+  // Route params are strings while server ids are numbers, and lookups match on identity.
+  // Temp ids are strings for their whole life, so only digits are converted.
+  const normalizeId = (id) => (/^\d+$/.test(String(id)) ? Number(id) : String(id))
 
   /**
    * Refresh a list that is already on screen from cache. Deliberately not awaited: the
    * cached copy renders immediately and this only catches up with the server.
    *
-   * The response is applied only if the user has not touched the list since it opened.
-   * Replacing the items swaps every row object, which would discard an edit that has
-   * not been saved yet and yank the caret out of the field being typed in — and the
-   * cached copy is the one the user has been editing, so it wins. Focusing a field is
-   * itself a touch (`beginEdit`), so this covers typing that has not landed yet too.
+   * With local changes pending, the version decides: if the server is still on the one our
+   * edit was based on, the edit is fine and will be pushed — leave it. If it has moved on,
+   * the newer copy wins and the user is told, which is the same rule the server's 409
+   * applies at push time.
    *
-   * Failures are silent by design: offline, the cached copy is exactly what the user is
-   * already looking at, and there is nothing to report.
+   * With nothing pending there is nothing to lose, but replacing the items still swaps
+   * every row object, which would pull the caret out of a field being typed in — so only a
+   * list the user has not touched since opening is replaced.
    */
   async function revalidate(id) {
+    const record = find(id)
+    if (!record?.serverId) return
     try {
-      const record = await fetchOne(id)
-      if (pristine && openId.value === id) upsert(record)
+      const { data } = await api.get(`shopping-list?list_id=${record.serverId}`)
+      if (record.dirty) {
+        if ((data.version ?? null) !== record.version) {
+          sync.adopt(record, data)
+          sync.reportConflict(record)
+        }
+        return
+      }
+      if (pristine && openId.value === record.id) sync.adopt(record, data)
     } catch {
-      // ignored on purpose — see above
+      // Offline, or gone: the cached copy is exactly what the user is already looking at.
     }
   }
 
   /**
-   * Make `id` the open list. Returns the key of the blank row created for an empty
-   * list (so the caller can focus it), or null.
+   * Make `id` the open list. Returns the key of the blank row created for an empty list
+   * (so the caller can focus it), or null.
    *
    * Throws only when the list is not cached and cannot be fetched — the caller decides
-   * whether that means "bounce home" or "show it offline"; a cached list never throws.
+   * whether that means "bounce home" or "show it offline". A cached list never throws,
+   * which is what makes a list openable with no connection at all.
    */
   async function open(id) {
-    // Route params are strings and API ids are numbers, and `current` matches on
-    // identity — so normalise here, once, rather than at every comparison.
-    const target = Number(id)
+    const target = normalizeId(id)
 
     if (openId.value !== target) {
-      // The outgoing list's debounced save still belongs to it, and `save()` captures
-      // its id and payload synchronously, so fire it before the pointer moves.
+      // The outgoing list's debounced save still belongs to it, and `save()` captures its
+      // record synchronously, so fire it before the pointer moves.
       persistence.stopSaving()
       history.reset()
       settings.reset()
@@ -155,44 +211,65 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     saveStatus.value = ''
     pristine = true
 
-    if (isLoaded()) {
+    const record = current.value
+    if (record?.items != null) {
       revalidate(target)
       return rows.ensureRow()
     }
 
+    // Not cached. A temp list we no longer hold locally never existed anywhere else, so
+    // there is nothing to fetch and no point pretending otherwise.
+    const serverId = record?.serverId ?? (isTemp(target) ? null : target)
+    if (!serverId) {
+      forget(target)
+      throw Object.assign(new Error('No such list'), { status: 404 })
+    }
+
     try {
-      // Must come before the fetch, not with it: an unauthenticated GET is answered
-      // 401, and this page reads any answer as final and leaves. See `retrySync`.
+      // A session that started offline has no API token yet, and an unauthenticated GET is
+      // answered 401 — which this page reads as final and leaves. See `retrySync`.
       await useAuthStore().retrySync()
-      upsert(await fetchOne(target))
+      const { data } = await api.get(`shopping-list?list_id=${serverId}`)
+      const fresh = recordFromApi(data)
+      if (record) Object.assign(record, fresh, { id: record.id })
+      else lists.value.push(fresh)
     } catch (err) {
-      // Gone for good: stop listing it. A transport failure says nothing about whether
-      // the list exists, so in that case the record stays exactly as it was.
+      // Gone for good: stop listing it. A transport failure says nothing about whether the
+      // list exists, so in that case the record stays exactly as it was.
       if (err.status === 404) forget(target)
       throw err
     }
     return rows.ensureRow()
   }
 
-  /** Drop everything. Call on logout, or the next user briefly sees these lists. */
+  /** Drop everything, here and on disk. Call on logout, or the next person to sign in on
+   *  this browser sees these lists. */
   function clear() {
     persistence.reset()
     history.reset()
     settings.reset()
     lists.value = []
+    orderDirty.value = false
     openId.value = null
     saveStatus.value = ''
+    // After the mutations, not before: each one arms the write, and the whole point here is
+    // that nothing gets written back.
+    clearTimeout(persistTimer)
+    clearState(uid())
   }
 
   return {
     // state
     lists,
+    visibleLists,
     items,
     listName,
     showQuantity,
     showCheckbox,
     saveStatus,
     saveFailed,
+    pendingCount,
+    syncing: sync.syncing,
     canUndo: history.canUndo,
     canRedo: history.canRedo,
     // the open list
@@ -205,6 +282,8 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     createList: collection.createList,
     deleteList: collection.deleteList,
     reorderLists: collection.reorderLists,
+    // sync
+    sync: sync.sync,
     // history
     undo: history.undo,
     redo: history.redo,

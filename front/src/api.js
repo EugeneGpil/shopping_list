@@ -16,6 +16,10 @@ async function request(method, path, body) {
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`)
     err.status = res.status
+    // Some failures carry a body worth having: a 409 answers with the copy that won, so
+    // the caller can adopt it without a second request. An error page that is not JSON
+    // must not mask the status, hence the swallow.
+    err.body = await res.json().catch(() => null)
     throw err
   }
   return res.json()

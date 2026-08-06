@@ -1,17 +1,15 @@
-import { api } from 'src/api'
-import { SAVE_STATUS } from './persistence'
-
 /**
- * Per-list settings that are saved immediately rather than debounced: the list name and
- * the two column toggles. Each is a single small PUT, and each reverts the local value
- * if the request fails.
+ * Per-list settings: the list name and the two column toggles. Saved immediately rather
+ * than debounced — each is a deliberate single act, not a stream of keystrokes.
  *
- * The fields live on the list record, so a rename here is the same object the index
- * page renders — there is nothing to keep in sync.
+ * No network code of its own: it edits the record and calls the same `save()` the rows use,
+ * so a toggle flipped offline sticks and syncs later like everything else. That is a change
+ * from the version before offline support, which reverted the toggle when the request
+ * failed — with a queue behind it, reverting would be throwing away a change we can keep.
  *
- * Owns the pre-edit name snapshot used to revert.
+ * Owns the pre-edit name snapshot, which is only used to reject an empty title.
  */
-export function createSettings({ current, openId, saveStatus, report }) {
+export function createSettings({ current, save }) {
   let nameSnapshot = ''
 
   /** Live value while the title is being typed in; committed by `saveName`. */
@@ -27,21 +25,15 @@ export function createSettings({ current, openId, saveStatus, report }) {
     const record = current.value
     if (!record) return
     const name = record.name.trim()
+    // A list with no name is not a state worth keeping, so this is the one revert left.
     if (!name) {
       record.name = nameSnapshot
       return
     }
     record.name = name
     if (name === nameSnapshot) return
-    const id = openId.value
-    saveStatus.value = SAVE_STATUS.saving
-    try {
-      await api.put(`shopping-list?list_id=${id}`, { name })
-      report(id, SAVE_STATUS.saved)
-    } catch {
-      record.name = nameSnapshot
-      report(id, SAVE_STATUS.failed)
-    }
+    nameSnapshot = name
+    await save()
   }
 
   // The record's field names are the API's field names, so the toggle needs nothing but
@@ -49,17 +41,8 @@ export function createSettings({ current, openId, saveStatus, report }) {
   async function toggleColumn(field) {
     const record = current.value
     if (!record) return
-    const next = !record[field]
-    record[field] = next
-    const id = openId.value
-    saveStatus.value = SAVE_STATUS.saving
-    try {
-      await api.put(`shopping-list?list_id=${id}`, { [field]: next })
-      report(id, SAVE_STATUS.saved)
-    } catch {
-      record[field] = !next
-      report(id, SAVE_STATUS.failed)
-    }
+    record[field] = !record[field]
+    await save()
   }
 
   const toggleQuantity = () => toggleColumn('show_quantity')

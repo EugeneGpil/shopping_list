@@ -1,3 +1,5 @@
+import { createRow } from './record'
+
 /**
  * Every change to the open list's rows. Components call these by row index — they hold
  * no row objects of their own, so there is no way to edit a row without going through
@@ -6,17 +8,7 @@
  * The insert helpers return the new row's key so the caller can move focus to it —
  * focus is a DOM concern and stays in the page.
  */
-export function createRows({ current, record, scheduleSave }) {
-  // Row keys only have to be unique within the session, and are deliberately NOT reset
-  // per list: a stale key from another list can then never collide with a new row in
-  // the page's ref map.
-  let keySeq = 0
-  const nextKey = () => ++keySeq
-
-  function createRow(fields = {}) {
-    return { name: '', quantity: '', checked: false, ...fields, _key: nextKey() }
-  }
-
+export function createRows({ current, record, scheduleSave, markDirty }) {
   /** The open list's rows, or null when nothing is open or nothing is loaded yet. */
   const rows = () => current.value?.items ?? null
   const rowAt = (index) => rows()?.[index] ?? null
@@ -27,10 +19,16 @@ export function createRows({ current, record, scheduleSave }) {
   // the field reports `change` (i.e. on blur), which is where `endEdit` pushes the one
   // undo step for it and schedules the save. Saving per keystroke would both hammer the
   // endpoint and break "one edit, one undo step".
+  //
+  // It does mark the list dirty though. Every keystroke is already mirrored to
+  // localStorage, so a phone killed before the blur keeps the text — and without the flag
+  // the next launch would hold text it never intends to push.
 
   function setName(index, value) {
     const row = rowAt(index)
-    if (row) row.name = value ?? ''
+    if (!row) return
+    row.name = value ?? ''
+    markDirty()
   }
 
   /**
@@ -42,7 +40,10 @@ export function createRows({ current, record, scheduleSave }) {
     const digits = String(value ?? '')
       .replace(/[^0-9]/g, '')
       .replace(/^0+/, '')
-    if (row) row.quantity = digits
+    if (row) {
+      row.quantity = digits
+      markDirty()
+    }
     return digits
   }
 
@@ -102,7 +103,6 @@ export function createRows({ current, record, scheduleSave }) {
   }
 
   return {
-    createRow,
     ensureRow,
     setName,
     setQuantity,

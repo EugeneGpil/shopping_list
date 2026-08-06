@@ -25,9 +25,19 @@
 
     <q-inner-loading :showing="loading" />
 
+    <!-- Changes are kept locally and pushed when there is a connection, so the only thing
+         worth saying is that some are still waiting. Silence would read as "saved". -->
+    <div v-if="store.pendingCount" class="row items-center q-gutter-xs q-mb-sm text-grey">
+      <q-spinner v-if="store.syncing" size="14px" />
+      <q-icon v-else name="cloud_off" size="16px" />
+      <span class="text-caption">
+        {{ store.syncing ? 'Syncing…' : `${store.pendingCount} change(s) waiting to sync` }}
+      </span>
+    </div>
+
     <!-- Only reachable with nothing cached to fall back on: with lists in the store they
          are shown instead, stale at worst. -->
-    <div v-if="loadFailed && !store.lists.length" class="text-center q-mt-xl">
+    <div v-if="loadFailed && !store.visibleLists.length" class="text-center q-mt-xl">
       <q-icon name="cloud_off" size="48px" color="grey-6" />
       <div class="text-subtitle1 q-mt-sm">Can't load your lists</div>
       <q-btn
@@ -41,14 +51,15 @@
       />
     </div>
 
-    <div v-else-if="!loading && !store.lists.length" class="text-grey text-center q-mt-xl">
+    <div v-else-if="!loading && !store.visibleLists.length" class="text-grey text-center q-mt-xl">
       No lists yet. Create your first one above.
     </div>
 
     <!-- `update:model-value` rather than `v-model`: the new order goes back through an
-         action, which is also what persists it. -->
+         action, which is also what persists it. Bound to the visible lists, so a list
+         waiting to be deleted on the server is not in the order the user drags. -->
     <draggable
-      :model-value="store.lists"
+      :model-value="store.visibleLists"
       item-key="id"
       handle=".drag-handle"
       :animation="150"
@@ -113,7 +124,7 @@ async function load() {
     // Offline with lists already in the store: keep showing them. They are the same
     // records the editor works on, so at worst they are a little stale — while an empty
     // page would suggest the lists are gone.
-    if (!isNetworkError(err) || !store.lists.length) loadFailed.value = true
+    if (!isNetworkError(err) || !store.visibleLists.length) loadFailed.value = true
   } finally {
     loading.value = false
   }
@@ -124,6 +135,8 @@ async function create() {
   if (!name || creating.value) return
   creating.value = true
   try {
+    // Succeeds offline too — the list is created locally and pushed later — so the only
+    // way here is a refusal from the server, e.g. a name it will not accept.
     const list = await store.createList(name)
     newName.value = ''
     router.push(`/list/${list.id}`)
@@ -147,9 +160,9 @@ function remove(list) {
     cancel: true,
     ok: { label: 'Delete', color: 'negative' },
   }).onOk(async () => {
-    try {
-      await store.deleteList(list.id)
-    } catch {
+    // The row goes immediately either way; offline the deletion is queued, which needs no
+    // announcement. Only the server actively refusing is worth a word.
+    if ((await store.deleteList(list.id)) === 'failed') {
       $q.notify({ type: 'negative', message: 'Could not delete the list.' })
     }
   })
