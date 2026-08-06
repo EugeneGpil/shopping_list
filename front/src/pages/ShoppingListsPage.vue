@@ -90,6 +90,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
+import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
@@ -153,6 +154,12 @@ function remove(list) {
     }
   })
 }
+
+// Only worth a retry if the last attempt actually failed — a successful index does not
+// need refetching just because the connection blinked.
+useRetryWhenOnline(() => {
+  if (loadFailed.value) load()
+})
 
 async function onLogout() {
   await authStore.logout()

@@ -82,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
@@ -92,6 +92,7 @@ import ShoppingListUnavailable from 'src/components/ShoppingListUnavailable.vue'
 import { useRowRefs } from 'src/composables/useRowRefs'
 import { useUndoRedoShortcuts } from 'src/composables/useUndoRedoShortcuts'
 import { useFlushOnHide } from 'src/composables/useFlushOnHide'
+import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { isNetworkError } from 'src/api'
 
@@ -168,16 +169,12 @@ openList(route.params.id)
 // run again — without this, switching lists would keep showing the old one.
 watch(() => route.params.id, openList)
 
-// Coming back online is the exact moment a failed load can succeed, so take it without
-// making the user press Retry. A no-op when the list did load.
-function onOnline() {
+// A no-op when the list did open — only a list we could not reach is worth retrying.
+useRetryWhenOnline(() => {
   if (loadFailed.value) retry()
-}
-
-onMounted(() => window.addEventListener('online', onOnline))
-
-onBeforeUnmount(() => {
-  window.removeEventListener('online', onOnline)
-  store.stopSaving()
 })
+
+// The debounced save outlives this page, so a pending one has to be fired on the way out
+// rather than left on a timer that nothing will reach.
+onBeforeUnmount(store.stopSaving)
 </script>

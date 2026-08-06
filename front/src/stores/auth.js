@@ -50,7 +50,14 @@ export const useAuthStore = defineStore('auth', {
       })
     },
 
-    // Retry the exchange that was skipped offline. Safe to call at any time.
+    /**
+     * Retry the exchange that was skipped offline.
+     *
+     * Safe and cheap to call at any time — it returns at once unless a Firebase session
+     * is sitting there without a sanctum token. That is why the read paths in the lists
+     * store simply call it before every fetch instead of trying to work out for
+     * themselves whether the app has credentials yet.
+     */
     async retrySync() {
       if (!this.syncPending || !this.user) return
       if (localStorage.getItem(TOKEN_KEY)) {

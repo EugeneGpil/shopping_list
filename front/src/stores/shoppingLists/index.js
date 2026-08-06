@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api } from 'src/api'
+import { useAuthStore } from 'src/stores/auth'
 import { createCollection } from './collection'
 import { createPersistence, SAVE_STATUS } from './persistence'
 import { createHistory } from './history'
@@ -160,6 +161,9 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     }
 
     try {
+      // Must come before the fetch, not with it: an unauthenticated GET is answered
+      // 401, and this page reads any answer as final and leaves. See `retrySync`.
+      await useAuthStore().retrySync()
       upsert(await fetchOne(target))
     } catch (err) {
       // Gone for good: stop listing it. A transport failure says nothing about whether

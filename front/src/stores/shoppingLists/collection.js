@@ -1,4 +1,5 @@
 import { api } from 'src/api'
+import { useAuthStore } from 'src/stores/auth'
 
 /**
  * The collection itself: fetching the index, creating, deleting, reordering.
@@ -15,6 +16,10 @@ export function createCollection({ lists, upsert }) {
    * and count come from the server. Records the server no longer returns are dropped.
    */
   async function fetchLists() {
+    // A session that started offline has no API token yet, and an unauthenticated GET
+    // comes back 401 rather than failing at the transport — which would look like a
+    // definitive "no lists for you" instead of "we could not ask". See `retrySync`.
+    await useAuthStore().retrySync()
     const { data } = await api.get('shopping-lists')
     lists.value = data.map((entry) => {
       const known = find(entry.id)
