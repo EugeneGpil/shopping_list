@@ -60,7 +60,11 @@
       </draggable>
 
       <!-- A new row is always appended at the end, so while a search is filtering the
-           list it would land out of view — disable it until the search is cleared. -->
+           list it would land out of view — disable it until the search is cleared.
+
+           The row is left unfocused on purpose: the button sits under the last row, so
+           focusing would open the on-screen keyboard over the very list the user is
+           adding to. The row is there to tap when they are ready to type in it. -->
       <q-btn
         flat
         dense
@@ -70,7 +74,7 @@
         color="primary"
         class="full-width q-mt-sm"
         :disable="!!query"
-        @click="focusName(store.addRow())"
+        @click="store.addRow()"
       >
         <q-tooltip v-if="query">Clear the search to add items</q-tooltip>
       </q-btn>
