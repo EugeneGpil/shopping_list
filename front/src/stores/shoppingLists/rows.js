@@ -116,6 +116,31 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
     return next._key
   }
 
+  /**
+   * The inverse of `splitRow`: take a row up into the one above it, the way Backspace at
+   * the start of a line joins it to the line before. Undoes a split exactly, and joins two
+   * rows that were never split apart just the same.
+   *
+   * The row above keeps its own quantity and tick — it is still that item, only its text
+   * grew. Whatever the row being absorbed carried is dropped with the row, as it would be
+   * on a delete.
+   *
+   * Returns the row above's key and the offset the join landed at, so the caller can put
+   * the caret on the seam; null when there is no row above to join.
+   */
+  function mergeRowUp(index) {
+    const list = rows()
+    const row = rowAt(index)
+    const above = rowAt(index - 1)
+    if (!list || !row || !above) return null
+    record()
+    const caret = (above.name ?? '').length
+    above.name = (above.name ?? '') + (row.name ?? '')
+    list.splice(index, 1)
+    scheduleSave()
+    return { key: above._key, caret }
+  }
+
   function removeRow(index) {
     const list = rows()
     if (!list || !list[index]) return
@@ -141,6 +166,7 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
     addRow,
     addRowAfter,
     splitRow,
+    mergeRowUp,
     removeRow,
     reorder,
   }

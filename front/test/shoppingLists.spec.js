@@ -135,21 +135,21 @@ describe('editing offline', () => {
   })
 })
 
+async function openWith(names) {
+  const seeded = server.seed(
+    'Groceries',
+    names.map((name) => ({ name })),
+  )
+  const store = freshStore()
+  await store.fetchLists()
+  await store.open(seeded.id)
+  return store
+}
+const names = (store) => store.items.map((i) => i.name)
+
 // What Enter does in the name field when there is no quantity column to move to. The
 // caret positions are what `ShoppingListRow` reads off the textarea.
 describe('splitting a row at the caret', () => {
-  async function openWith(names) {
-    const seeded = server.seed(
-      'Groceries',
-      names.map((name) => ({ name })),
-    )
-    const store = freshStore()
-    await store.fetchLists()
-    await store.open(seeded.id)
-    return store
-  }
-  const names = (store) => store.items.map((i) => i.name)
-
   it('moves the text after the caret down, and leaves the rest', async () => {
     const store = await openWith(['Oat milk'])
     store.splitRow(0, 3, 3)
@@ -187,6 +187,53 @@ describe('splitting a row at the caret', () => {
     store.toggleChecked(0, true)
     store.splitRow(0, 3, 3)
     expect(store.items[1]).toMatchObject({ name: ' milk', quantity: '', checked: false })
+  })
+})
+
+// The inverse, from Backspace at the start of a name. `ShoppingListRow` only emits from
+// that one caret position, so these all start there.
+describe('joining a row into the one above', () => {
+  it('appends the text to the row above and reports the seam', async () => {
+    const store = await openWith(['Oat', ' milk', 'Bread'])
+    expect(store.mergeRowUp(1)).toMatchObject({ caret: 3 })
+    expect(names(store)).toEqual(['Oat milk', 'Bread'])
+  })
+
+  it('undoes a split exactly', async () => {
+    const store = await openWith(['Oat milk'])
+    const key = store.splitRow(0, 3, 3)
+    expect(store.items[1]._key).toBe(key)
+    store.mergeRowUp(1)
+    expect(names(store)).toEqual(['Oat milk'])
+  })
+
+  it('does nothing on the first row, which has nothing above it', async () => {
+    const store = await openWith(['Milk', 'Bread'])
+    expect(store.mergeRowUp(0)).toBeNull()
+    expect(names(store)).toEqual(['Milk', 'Bread'])
+  })
+
+  it('joins an empty row into the one above, leaving the caret at the end', async () => {
+    const store = await openWith(['Milk', ''])
+    expect(store.mergeRowUp(1)).toMatchObject({ caret: 4 })
+    expect(names(store)).toEqual(['Milk'])
+  })
+
+  it('keeps the quantity and tick of the row above, and drops the absorbed row’s', async () => {
+    const store = await openWith(['Oat', ' milk'])
+    store.setQuantity(0, '2')
+    store.toggleChecked(0, true)
+    store.setQuantity(1, '9')
+    store.mergeRowUp(1)
+    expect(store.items).toHaveLength(1)
+    expect(store.items[0]).toMatchObject({ name: 'Oat milk', quantity: '2', checked: true })
+  })
+
+  it('is one undo step', async () => {
+    const store = await openWith(['Oat', ' milk'])
+    store.mergeRowUp(1)
+    store.undo()
+    expect(names(store)).toEqual(['Oat', ' milk'])
   })
 })
 

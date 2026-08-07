@@ -53,6 +53,7 @@
             :index="index"
             :searching="!!query"
             @name-enter="(start, end) => onNameEnter(item, index, start, end)"
+            @name-backspace="onNameBackspace(index)"
             @qty-enter="focusName(store.addRowAfter(index))"
           />
         </template>
@@ -127,6 +128,17 @@ function onNameEnter(item, index, start, end) {
   // undo stack in the order they were finished rather than the order they happened.
   store.endEdit()
   focusName(store.splitRow(index, start, end), 0)
+}
+
+// The other direction, and only where Enter splits: Backspace from the start of a name
+// takes the row up into the one above, leaving the caret on the seam. A row with a
+// quantity is more than its name, so joining two of them would quietly drop one — there
+// the key stays an ordinary delete.
+function onNameBackspace(index) {
+  if (store.showQuantity) return
+  store.endEdit()
+  const joined = store.mergeRowUp(index)
+  if (joined) focusName(joined.key, joined.caret)
 }
 
 // ---- search ----

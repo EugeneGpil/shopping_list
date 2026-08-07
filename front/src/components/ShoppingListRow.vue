@@ -36,6 +36,7 @@
         @focus="store.beginEdit"
         @change="store.endEdit"
         @keydown.enter.prevent="onNameEnter"
+        @keydown.backspace="onNameBackspace"
       />
     </q-item-section>
     <q-item-section
@@ -99,8 +100,9 @@ const props = defineProps({
 //
 // `name-enter` carries the field's selection, because where the caret sat is the one
 // thing the page cannot look up: with the quantity column hidden, Enter splits the name
-// there.
-const emit = defineEmits(['name-enter', 'qty-enter'])
+// there. `name-backspace` is the other half of that — it only fires from the one spot
+// where Backspace means something to the list rather than to the text.
+const emit = defineEmits(['name-enter', 'qty-enter', 'name-backspace'])
 
 const store = useShoppingListsStore()
 
@@ -120,6 +122,17 @@ const struck = computed(() => store.showCheckbox && item.value.checked)
 function onNameEnter(e) {
   const el = e.target
   emit('name-enter', el.selectionStart, el.selectionEnd)
+}
+
+// Backspace with the caret at the very start and nothing selected is the one case where
+// the key is about the list rather than the text: there is no character in front of it to
+// delete, so it joins this row to the one above instead. Every other Backspace — a
+// selection, a caret further in — is an ordinary delete and stays with the field.
+function onNameBackspace(e) {
+  const el = e.target
+  if (el.selectionStart !== 0 || el.selectionEnd !== 0) return
+  e.preventDefault()
+  emit('name-backspace')
 }
 
 // Reject non-digits at the keystroke, so the caret never jumps; the store sanitizes

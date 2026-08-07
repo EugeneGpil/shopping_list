@@ -304,6 +304,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     addRow: rows.addRow,
     addRowAfter: rows.addRowAfter,
     splitRow: rows.splitRow,
+    mergeRowUp: rows.mergeRowUp,
     removeRow: rows.removeRow,
     reorder: rows.reorder,
   }
