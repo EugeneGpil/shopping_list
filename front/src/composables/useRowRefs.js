@@ -21,8 +21,10 @@ export function useRowRefs() {
 
   // Rows for a key that was just added do not exist until the next render, so every
   // focus call waits a tick. A null key (nothing was added) is a no-op by design.
-  function focusName(key) {
-    if (key) nextTick(() => rowRefs.get(key)?.focusName())
+  // `caret` is passed straight through: a row split off another one wants the cursor at
+  // the seam (0), a row created empty does not care.
+  function focusName(key, caret) {
+    if (key) nextTick(() => rowRefs.get(key)?.focusName(caret))
   }
 
   function focusQty(key) {

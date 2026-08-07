@@ -85,6 +85,37 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
   const addRow = () => insertRow(rows()?.length ?? 0)
   const addRowAfter = (index) => insertRow(index + 1)
 
+  /**
+   * Break a row in two at the caret, the way Enter breaks a line in any editor: what sits
+   * after the caret becomes a new row below, what sits before it stays. So Enter at the
+   * end of the text leaves an empty row below, Enter at the start pushes the whole text
+   * down, and Enter mid-text splits it — one rule, all three cases.
+   *
+   * `start`/`end` are the field's selection: a selection is dropped rather than
+   * duplicated, which is what typing over it would do.
+   *
+   * Quantity and checkbox are not carried over — the new row is a new item, and inheriting
+   * "2" or a tick from the row it was cut out of would be a claim about it that the user
+   * never made.
+   *
+   * Returns the new row's key so the caller can move the caret into it.
+   */
+  function splitRow(index, start, end) {
+    const list = rows()
+    const row = rowAt(index)
+    if (!row) return null
+    const text = row.name ?? ''
+    const at = (n) => (n == null ? text.length : Math.max(0, Math.min(n, text.length)))
+    const from = at(start)
+    const to = at(end ?? start)
+    record()
+    row.name = text.slice(0, Math.min(from, to))
+    const next = createRow({ name: text.slice(Math.max(from, to)) })
+    list.splice(index + 1, 0, next)
+    scheduleSave()
+    return next._key
+  }
+
   function removeRow(index) {
     const list = rows()
     if (!list || !list[index]) return
@@ -109,6 +140,7 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
     toggleChecked,
     addRow,
     addRowAfter,
+    splitRow,
     removeRow,
     reorder,
   }

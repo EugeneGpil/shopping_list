@@ -135,6 +135,61 @@ describe('editing offline', () => {
   })
 })
 
+// What Enter does in the name field when there is no quantity column to move to. The
+// caret positions are what `ShoppingListRow` reads off the textarea.
+describe('splitting a row at the caret', () => {
+  async function openWith(names) {
+    const seeded = server.seed(
+      'Groceries',
+      names.map((name) => ({ name })),
+    )
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+    return store
+  }
+  const names = (store) => store.items.map((i) => i.name)
+
+  it('moves the text after the caret down, and leaves the rest', async () => {
+    const store = await openWith(['Oat milk'])
+    store.splitRow(0, 3, 3)
+    expect(names(store)).toEqual(['Oat', ' milk'])
+  })
+
+  it('pushes the whole text down when the caret is at the start', async () => {
+    const store = await openWith(['Milk'])
+    store.splitRow(0, 0, 0)
+    expect(names(store)).toEqual(['', 'Milk'])
+  })
+
+  it('adds an empty row when the caret is at the end', async () => {
+    const store = await openWith(['Milk', 'Bread'])
+    store.splitRow(0, 4, 4)
+    expect(names(store)).toEqual(['Milk', '', 'Bread'])
+  })
+
+  it('drops a selection rather than duplicating it', async () => {
+    const store = await openWith(['Oat milk'])
+    store.splitRow(0, 3, 8)
+    expect(names(store)).toEqual(['Oat', ''])
+  })
+
+  it('is one undo step', async () => {
+    const store = await openWith(['Oat milk'])
+    store.splitRow(0, 3, 3)
+    store.undo()
+    expect(names(store)).toEqual(['Oat milk'])
+  })
+
+  it('leaves the new row without the quantity or tick of the one it came from', async () => {
+    const store = await openWith(['Oat milk'])
+    store.setQuantity(0, '2')
+    store.toggleChecked(0, true)
+    store.splitRow(0, 3, 3)
+    expect(store.items[1]).toMatchObject({ name: ' milk', quantity: '', checked: false })
+  })
+})
+
 describe('creating and deleting offline', () => {
   it('creates a usable list offline and pushes it, without changing its local id', async () => {
     const store = freshStore()

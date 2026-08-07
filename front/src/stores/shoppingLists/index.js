@@ -303,6 +303,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     toggleChecked: rows.toggleChecked,
     addRow: rows.addRow,
     addRowAfter: rows.addRowAfter,
+    splitRow: rows.splitRow,
     removeRow: rows.removeRow,
     reorder: rows.reorder,
   }

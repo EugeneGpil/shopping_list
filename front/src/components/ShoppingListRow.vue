@@ -33,7 +33,7 @@
         @update:model-value="(v) => store.setName(index, v)"
         @focus="store.beginEdit"
         @change="store.endEdit"
-        @keydown.enter.prevent="emit('name-enter')"
+        @keydown.enter.prevent="onNameEnter"
       />
     </q-item-section>
     <q-item-section
@@ -91,9 +91,13 @@ const props = defineProps({
   searching: { type: Boolean, default: false },
 })
 
-// Only Enter is the page's business — it moves focus to another row, or appends one and
+// Only Enter is the page's business — it moves focus to another row, or adds one and
 // focuses that, and focus across rows is the page's job. Everything else this row does
 // is a store call it can make itself.
+//
+// `name-enter` carries the field's selection, because where the caret sat is the one
+// thing the page cannot look up: with the quantity column hidden, Enter splits the name
+// there.
 const emit = defineEmits(['name-enter', 'qty-enter'])
 
 const store = useShoppingListsStore()
@@ -108,6 +112,13 @@ const qtyInput = ref(null)
 // Hiding the checkbox column also drops the strikethrough — otherwise a checked
 // row would be struck through with no way to uncheck it. The flag itself is kept.
 const struck = computed(() => store.showCheckbox && item.value.checked)
+
+// Read off the event target rather than the ref: this is the very textarea the key was
+// pressed in, and its selection is still where the user left it.
+function onNameEnter(e) {
+  const el = e.target
+  emit('name-enter', el.selectionStart, el.selectionEnd)
+}
 
 // Reject non-digits at the keystroke, so the caret never jumps; the store sanitizes
 // whatever still gets in (a paste, an IME) and hands back what it stored.
@@ -125,7 +136,13 @@ function onQtyInput(value) {
 }
 
 defineExpose({
-  focusName: () => nameInput.value?.focus(),
+  // `caret` places the cursor inside the text instead of wherever the browser would put
+  // it: a row that was just split off carries the tail of another one, and the user is
+  // mid-word — they should be typing at the seam, not at the end of what moved down.
+  focusName: (caret) => {
+    nameInput.value?.focus()
+    if (caret != null) nameInput.value?.nativeEl?.setSelectionRange(caret, caret)
+  },
   focusQty: () => qtyInput.value?.focus(),
   // Quasar's `autogrow` re-measures on input only, so anything that changes this
   // column's width (rotation, toggling a column) leaves a wrapped row clipped at

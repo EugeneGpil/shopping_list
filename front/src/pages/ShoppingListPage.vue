@@ -52,7 +52,7 @@
             :ref="(el) => setRowRef(item._key, el)"
             :index="index"
             :searching="!!query"
-            @name-enter="onNameEnter(item, index)"
+            @name-enter="(start, end) => onNameEnter(item, index, start, end)"
             @qty-enter="focusName(store.addRowAfter(index))"
           />
         </template>
@@ -114,9 +114,19 @@ useFlushOnHide(store.flush)
 // lands because a newer copy of the list arrived from the server.
 watch([() => store.showQuantity, () => store.showCheckbox], regrowNames)
 
-function onNameEnter(item, index) {
-  if (store.showQuantity) focusQty(item._key)
-  else focusName(store.addRowAfter(index))
+// With a quantity column, Enter is a move between the two fields of the same row — the
+// name is only half of it. Without one, the name *is* the row, so Enter ends it and
+// starts the next: the text after the caret goes down with it, and the caret follows,
+// landing at the seam.
+function onNameEnter(item, index, start, end) {
+  if (store.showQuantity) {
+    focusQty(item._key)
+    return
+  }
+  // Close the open edit before the split records its own step, or the two land on the
+  // undo stack in the order they were finished rather than the order they happened.
+  store.endEdit()
+  focusName(store.splitRow(index, start, end), 0)
 }
 
 // ---- search ----
