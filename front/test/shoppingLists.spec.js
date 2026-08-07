@@ -267,6 +267,21 @@ describe('totalling a list of numbers', () => {
     expect(store.numericTotal).toBe(15)
   })
 
+  it('reads "_" as a digit separator and ignores it, as PHP does', async () => {
+    const store = await openTally(['50_000', '-1_500', '20'])
+    expect(store.numericTotal).toBe(48520)
+  })
+
+  it('takes a separator anywhere, so a half-typed "50_" still counts', async () => {
+    const store = await openTally(['50_', '1_0_0'])
+    expect(store.numericTotal).toBe(150)
+  })
+
+  it('stays quiet on a row that is only separators', async () => {
+    const store = await openTally(['100', '__'])
+    expect(store.numericTotal).toBeNull()
+  })
+
   it('stays quiet on a list that is not all numbers', async () => {
     const store = await openTally(['10', 'Milk'])
     expect(store.numericTotal).toBeNull()

@@ -75,8 +75,12 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
    * a new list starts with an empty row and Enter at the end of a name leaves another.
    * A signed row counts as written — "-40" subtracts.
    *
-   * Anything not a whole number stops it, decimals included: guessing what "1.5 kg" or
-   * "12 eggs" should add up to is how a total starts lying.
+   * `_` is a digit separator and is ignored, as it is in PHP and JS source: "50_000" is
+   * fifty thousand. It is what makes a column of five- and six-figure numbers readable at
+   * a glance, which is exactly the list that most wants a total.
+   *
+   * Anything else that is not a whole number stops it, decimals included: guessing what
+   * "1.5 kg" or "12 eggs" should add up to is how a total starts lying.
    */
   const numericTotal = computed(() => {
     if (showQuantity.value) return null
@@ -84,9 +88,15 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     let seen = 0
     for (const row of items.value) {
       const text = (row.name ?? '').trim()
+      // Blank is judged on the row as written, so a row of nothing but separators is a
+      // row with something in it that is not a number, not an empty one to skip over.
       if (!text) continue
-      if (!/^[+-]?\d+$/.test(text)) return null
-      total += Number(text)
+      // Separators are stripped rather than matched around, so one is allowed anywhere in
+      // the number — including a trailing one, halfway through typing "50_000", where
+      // refusing would make the total flicker away mid-keystroke.
+      const digits = text.replace(/_/g, '')
+      if (!/^[+-]?\d+$/.test(digits)) return null
+      total += Number(digits)
       seen++
     }
     return seen ? total : null
