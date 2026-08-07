@@ -59,7 +59,7 @@
         @keydown.enter.prevent="emit('qty-enter')"
       />
     </q-item-section>
-    <q-item-section side class="row-actions">
+    <q-item-section side class="row-delete">
       <q-btn
         flat
         round
@@ -70,17 +70,6 @@
         icon="delete"
         color="negative"
         @click="store.removeRow(index)"
-      />
-      <q-btn
-        flat
-        round
-        dense
-        size="sm"
-        padding="none"
-        tabindex="-1"
-        icon="add"
-        color="primary"
-        @click="emit('add-below')"
       />
     </q-item-section>
   </q-item>
@@ -110,9 +99,8 @@ const props = defineProps({
 //
 // `name-enter` carries the field's selection, because where the caret sat is the one
 // thing the page cannot look up: with the quantity column hidden, Enter splits the name
-// there. `add-below` is the same story without a caret — the button adds the row, the
-// page puts the cursor in it.
-const emit = defineEmits(['name-enter', 'qty-enter', 'add-below'])
+// there.
+const emit = defineEmits(['name-enter', 'qty-enter'])
 
 const store = useShoppingListsStore()
 
@@ -180,21 +168,15 @@ defineExpose({
   align-self: flex-start;
   height: 40px;
 }
-/* Add-below and delete, side by side and level with the first line of the name like
-   every other side control. The width is the two buttons and nothing else (17px each):
-   whatever this column takes comes straight out of the name beside it.
-   `padding-left` and `flex-wrap` are Quasar's own: a section after the main one is
-   indented 16px and set to wrap, which together would break the pair onto two lines
-   inside a box this narrow — i.e. quietly undo the horizontal layout. */
-.row-actions {
+/* The delete button, level with the first line of the name like every other side control.
+   No width of its own — the button is the whole column. `padding-left` is Quasar's own:
+   it indents a section after the main one by 16px, which here would only push the name
+   over for empty space. */
+.row-delete {
   align-self: flex-start;
   height: 40px;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
+  flex-shrink: 0;
   padding-left: 0;
-  width: 36px;
-  min-width: 36px;
 }
 /* Justify the wrapped name so every full line reaches both edges, like a book.
    The last line of an item stays flush left, as it does in print. */
