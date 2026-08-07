@@ -79,6 +79,17 @@
         <q-tooltip v-if="query">Clear the search to add items</q-tooltip>
       </q-btn>
 
+      <!-- Only a list that is nothing but whole numbers gets one; the store decides, see
+           `numericTotal`. It totals the whole list rather than what the search leaves on
+           screen — the total belongs to the list, not to the current filter. -->
+      <div
+        v-if="store.numericTotal !== null"
+        class="row items-center justify-between q-mt-md q-px-sm text-subtitle1"
+      >
+        <span class="text-grey-7">Total</span>
+        <span class="text-weight-medium">{{ store.numericTotal }}</span>
+      </div>
+
       <div v-if="visibleCount === 0" class="text-grey text-center q-my-lg">
         {{ query ? 'No items match your search.' : 'No items yet.' }}
       </div>

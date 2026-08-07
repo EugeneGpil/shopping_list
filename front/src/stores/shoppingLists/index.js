@@ -65,6 +65,33 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
   const showQuantity = computed(() => current.value?.show_quantity ?? true)
   const showCheckbox = computed(() => current.value?.show_checkbox ?? true)
 
+  /**
+   * The total of the rows, when the list is one a total makes sense for: no quantity
+   * column, and every row a whole number. That is a list being used as a tally — money
+   * counted out, weights, a running balance — and adding it up is the only thing left to
+   * do with it. `null` means "not that kind of list", which is the normal case.
+   *
+   * Blank rows are skipped rather than disqualifying, because there is nearly always one:
+   * a new list starts with an empty row and Enter at the end of a name leaves another.
+   * A signed row counts as written — "-40" subtracts.
+   *
+   * Anything not a whole number stops it, decimals included: guessing what "1.5 kg" or
+   * "12 eggs" should add up to is how a total starts lying.
+   */
+  const numericTotal = computed(() => {
+    if (showQuantity.value) return null
+    let total = 0
+    let seen = 0
+    for (const row of items.value) {
+      const text = (row.name ?? '').trim()
+      if (!text) continue
+      if (!/^[+-]?\d+$/.test(text)) return null
+      total += Number(text)
+      seen++
+    }
+    return seen ? total : null
+  })
+
   /** Tombstoned lists stay in `lists` until the server agrees, but are not shown. */
   const visibleLists = computed(() => lists.value.filter((l) => !l.pendingDelete))
   /** Changes waiting for a connection, for the "not synced yet" indicator. */
@@ -266,6 +293,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     listName,
     showQuantity,
     showCheckbox,
+    numericTotal,
     saveStatus,
     saveFailed,
     pendingCount,

@@ -237,6 +237,57 @@ describe('joining a row into the one above', () => {
   })
 })
 
+// The total under the list. `null` is what the page reads as "this is not a list to add
+// up", so every case that should show nothing asserts on that.
+describe('totalling a list of numbers', () => {
+  /** A list of numbers is one without a quantity column — that is half the rule. */
+  async function openTally(names) {
+    const store = await openWith(names)
+    await store.toggleQuantity()
+    return store
+  }
+
+  it('adds the rows up, signs included', async () => {
+    const store = await openTally(['100', '-40', '7'])
+    expect(store.numericTotal).toBe(67)
+  })
+
+  it('skips blank rows instead of refusing to total', async () => {
+    const store = await openTally(['10', '', '5'])
+    expect(store.numericTotal).toBe(15)
+  })
+
+  it('stays quiet on a list that is not all numbers', async () => {
+    const store = await openTally(['10', 'Milk'])
+    expect(store.numericTotal).toBeNull()
+  })
+
+  it('stays quiet on decimals, which are not whole numbers', async () => {
+    const store = await openTally(['1.5', '2'])
+    expect(store.numericTotal).toBeNull()
+  })
+
+  it('stays quiet on a list with nothing in it yet', async () => {
+    const store = await openTally([''])
+    expect(store.numericTotal).toBeNull()
+  })
+
+  it('stays quiet while there is a quantity column, numbers or not', async () => {
+    const store = await openWith(['100', '-40'])
+    expect(store.showQuantity).toBe(true)
+    expect(store.numericTotal).toBeNull()
+  })
+
+  it('follows an edit', async () => {
+    const store = await openTally(['10', '5'])
+    expect(store.numericTotal).toBe(15)
+    editRow(store, 1, '6')
+    expect(store.numericTotal).toBe(16)
+    editRow(store, 1, 'six')
+    expect(store.numericTotal).toBeNull()
+  })
+})
+
 describe('creating and deleting offline', () => {
   it('creates a usable list offline and pushes it, without changing its local id', async () => {
     const store = freshStore()
