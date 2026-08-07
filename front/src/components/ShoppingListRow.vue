@@ -1,5 +1,7 @@
 <template>
-  <q-item class="q-pl-none">
+  <!-- `q-pr-sm` halves Quasar's 16px right padding: the row actions are the last thing in
+       the row, and a wide gutter behind them is width the name could have had. -->
+  <q-item class="q-pl-none q-pr-sm">
     <q-item-section side style="width: 32px; min-width: 32px" class="items-center row-side">
       <q-icon
         name="drag_indicator"
@@ -57,7 +59,7 @@
         @keydown.enter.prevent="emit('qty-enter')"
       />
     </q-item-section>
-    <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none row-side">
+    <q-item-section side class="row-actions">
       <q-btn
         flat
         round
@@ -68,6 +70,17 @@
         icon="delete"
         color="negative"
         @click="store.removeRow(index)"
+      />
+      <q-btn
+        flat
+        round
+        dense
+        size="sm"
+        padding="none"
+        tabindex="-1"
+        icon="add"
+        color="primary"
+        @click="emit('add-below')"
       />
     </q-item-section>
   </q-item>
@@ -97,8 +110,9 @@ const props = defineProps({
 //
 // `name-enter` carries the field's selection, because where the caret sat is the one
 // thing the page cannot look up: with the quantity column hidden, Enter splits the name
-// there.
-const emit = defineEmits(['name-enter', 'qty-enter'])
+// there. `add-below` is the same story without a caret — the button adds the row, the
+// page puts the cursor in it.
+const emit = defineEmits(['name-enter', 'qty-enter', 'add-below'])
 
 const store = useShoppingListsStore()
 
@@ -165,6 +179,22 @@ defineExpose({
 .row-side {
   align-self: flex-start;
   height: 40px;
+}
+/* Add-below and delete, side by side and level with the first line of the name like
+   every other side control. The width is the two buttons and nothing else (17px each):
+   whatever this column takes comes straight out of the name beside it.
+   `padding-left` and `flex-wrap` are Quasar's own: a section after the main one is
+   indented 16px and set to wrap, which together would break the pair onto two lines
+   inside a box this narrow — i.e. quietly undo the horizontal layout. */
+.row-actions {
+  align-self: flex-start;
+  height: 40px;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  padding-left: 0;
+  width: 36px;
+  min-width: 36px;
 }
 /* Justify the wrapped name so every full line reaches both edges, like a book.
    The last line of an item stays flush left, as it does in print. */

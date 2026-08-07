@@ -54,6 +54,7 @@
             :searching="!!query"
             @name-enter="(start, end) => onNameEnter(item, index, start, end)"
             @qty-enter="focusName(store.addRowAfter(index))"
+            @add-below="focusName(store.addRowAfter(index))"
           />
         </template>
       </draggable>
