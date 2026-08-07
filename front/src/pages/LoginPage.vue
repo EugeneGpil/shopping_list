@@ -18,21 +18,22 @@
 </template>
 
 <script setup>
-import { auth } from 'src/boot/firebase'
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import { watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
-import { watch } from 'vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
-watch(() => authStore.isLoggedIn, (loggedIn) => {
-  if (loggedIn) router.push('/')
-}, { immediate: true })
+watch(
+  () => authStore.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) router.push('/')
+  },
+  { immediate: true },
+)
 
-async function loginWithGoogle() {
-  const provider = new GoogleAuthProvider()
-  await signInWithPopup(auth, provider).catch(() => {})
-}
+// The popup itself lives in the store, because the expired-session banner signs in the
+// same way and there must not be two versions of what "sign in" means.
+const loginWithGoogle = () => authStore.loginWithGoogle()
 </script>

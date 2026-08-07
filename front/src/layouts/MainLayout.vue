@@ -1,14 +1,17 @@
 <template>
   <q-layout view="lHh Lpr lFf">
     <q-page-container>
+      <SessionExpiredBanner />
       <router-view />
     </q-page-container>
   </q-layout>
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount } from 'vue'
+import { onMounted, onBeforeUnmount, watch } from 'vue'
+import SessionExpiredBanner from 'src/components/SessionExpiredBanner.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
+import { useAuthStore } from 'src/stores/auth'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 // Both pages live inside this layout, so the sync triggers belong here: whatever the user
@@ -21,6 +24,15 @@ onMounted(store.sync)
 
 // The event that fires the moment a connection comes back.
 useRetryWhenOnline(store.sync)
+
+// And the same for credentials coming back: a queue that stalled on a dead token has no
+// other reason to move again, so a recovered session is its own sync trigger.
+watch(
+  () => useAuthStore().sessionExpired,
+  (expired, wasExpired) => {
+    if (wasExpired && !expired) store.sync()
+  },
+)
 
 // And the one that covers the case `online` misses, which is the actual use case here: the
 // phone was put away in the shop with no signal, found wifi at home while the PWA was

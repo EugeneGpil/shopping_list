@@ -1,7 +1,11 @@
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { auth } from 'src/boot/firebase'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { api, TOKEN_KEY, isNetworkError } from 'src/api'
+
+// The in-flight recovery, shared by every caller. A dead token makes every request in a
+// sync pass fail at once, and they must produce one exchange between them, not one each.
+let recovering = null
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -9,6 +13,10 @@ export const useAuthStore = defineStore('auth', {
     ready: false,
     // Signed in to Firebase but with no sanctum token yet, because the exchange failed offline.
     syncPending: false,
+    // The backend refused our token and would not mint a new one from the Firebase session
+    // either. Nothing local is lost — edits stay queued — but only the user can fix it, so
+    // this is what puts the "sign in again" banner up.
+    sessionExpired: false,
   }),
 
   getters: {
@@ -78,13 +86,77 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async _syncWithBackend(firebaseUser) {
-      const idToken = await firebaseUser.getIdToken()
+    /**
+     * Mint a fresh API token from the Firebase session, after the backend refused the one
+     * we were using. Returns whether we hold a working token now.
+     *
+     * Called from `api.js` on any 401, so it has to be cheap to call and safe to call from
+     * several places at once: already-known-dead returns without a request, and concurrent
+     * callers share one exchange.
+     */
+    async recoverSession() {
+      // No point asking again — the banner is up, and only the user can act on it now.
+      // This is what keeps a failing save to one failed request rather than two.
+      if (this.sessionExpired || !this.user) return false
+      if (!recovering) {
+        recovering = this._recoverOnce().finally(() => {
+          recovering = null
+        })
+      }
+      return recovering
+    },
+
+    async _recoverOnce() {
+      try {
+        await this._syncWithBackend(this.user, true)
+        return true
+      } catch (err) {
+        // Offline says nothing about the session. Leave the flags alone and let the
+        // caller's own offline handling deal with it, or a re-login would be demanded of
+        // someone whose only problem is a tunnel.
+        if (isNetworkError(err)) return false
+        // A definitive refusal. Drop the dead token as well as raising the flag: `init()`
+        // only exchanges when there is none, so keeping it would stop the next sign-in
+        // from ever getting a working one.
+        localStorage.removeItem(TOKEN_KEY)
+        this.sessionExpired = true
+        return false
+      }
+    },
+
+    /** Opens Google's popup. Resolves to the user, or null if they closed it. */
+    async loginWithGoogle() {
+      const provider = new GoogleAuthProvider()
+      return signInWithPopup(auth, provider)
+        .then(({ user }) => user)
+        .catch(() => null)
+    },
+
+    /**
+     * What the expired-session banner does: re-authenticate, then immediately trade that
+     * for an API token, because `onAuthStateChanged` does not fire when the same user
+     * signs in again — so nothing else would.
+     */
+    async signInAgain() {
+      const user = await this.loginWithGoogle()
+      if (!user) return false
+      this.user = user
+      // Lowered first, or `recoverSession` would decline to try.
+      this.sessionExpired = false
+      return this.recoverSession()
+    },
+
+    async _syncWithBackend(firebaseUser, forceFresh = false) {
+      // `true` re-reads the token from Firebase instead of using its cached copy, which is
+      // the point when we are here because the backend just rejected what we had.
+      const idToken = await firebaseUser.getIdToken(forceFresh)
       const {
         data: { token },
       } = await api.post('auth/firebase', { id_token: idToken })
       localStorage.setItem(TOKEN_KEY, token)
+      // The only place a token is minted, so the only place both flags can be cleared.
       this.syncPending = false
+      this.sessionExpired = false
     },
 
     async logout() {
@@ -92,6 +164,7 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem(TOKEN_KEY)
       await signOut(auth)
       this.user = null
+      this.sessionExpired = false
     },
   },
 })
