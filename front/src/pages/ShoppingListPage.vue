@@ -12,10 +12,13 @@
     />
 
     <template v-else>
-      <ShoppingListHeader @back="goBack" />
+      <ShoppingListHeader :searching="searchOpen" @back="goBack" @toggle-search="toggleSearch" />
 
-      <!-- Search -->
+      <!-- Search, folded away behind the header's icon until asked for. `v-if` rather than
+           `v-show` so the row costs nothing while closed, which is the whole point. -->
       <q-input
+        v-if="searchOpen"
+        ref="searchInput"
         v-model="query"
         outlined
         dense
@@ -98,7 +101,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
@@ -117,6 +120,8 @@ const router = useRouter()
 const store = useShoppingListsStore()
 
 const query = ref('')
+const searchOpen = ref(false)
+const searchInput = ref(null)
 const loadFailed = ref(false)
 const loading = ref(false)
 
@@ -157,6 +162,16 @@ function onNameBackspace(index) {
 }
 
 // ---- search ----
+//
+// Closing clears the query as well as the field. A filter left running behind a folded
+// box would be invisible: rows missing from the list, "Add item" disabled, and nothing on
+// screen saying why.
+function toggleSearch() {
+  searchOpen.value = !searchOpen.value
+  if (searchOpen.value) nextTick(() => searchInput.value?.focus())
+  else query.value = ''
+}
+
 function matchesQuery(item) {
   const q = (query.value || '').trim().toLowerCase()
   return !q || item.name.toLowerCase().includes(q)

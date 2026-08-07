@@ -20,6 +20,20 @@
       />
     </div>
     <div class="row items-start no-wrap">
+      <!-- The search field is folded away behind this until it is wanted: a list is read
+           far more often than it is searched, and the box was taking a row of screen from
+           the list on every visit. Lit like the column toggles while it is open. -->
+      <q-btn
+        flat
+        round
+        dense
+        icon="search"
+        class="header-btn"
+        :color="searching ? 'primary' : 'grey'"
+        @click="emit('toggle-search')"
+      >
+        <q-tooltip>{{ searching ? 'Close search' : 'Search' }}</q-tooltip>
+      </q-btn>
       <q-btn
         flat
         round
@@ -72,8 +86,15 @@
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-// Navigation stays with the page — it owns the router and the flush-before-leave.
-const emit = defineEmits(['back'])
+defineProps({
+  // Whether the page currently has the search field open. Only lights the button — the
+  // field, the text in it and the filtering all belong to the page.
+  searching: { type: Boolean, default: false },
+})
+
+// Navigation stays with the page — it owns the router and the flush-before-leave — and so
+// does the search field, so both of these are the page's to act on.
+const emit = defineEmits(['back', 'toggle-search'])
 
 const store = useShoppingListsStore()
 
