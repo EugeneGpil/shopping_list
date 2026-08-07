@@ -79,6 +79,70 @@ describe('reading offline', () => {
   })
 })
 
+// What the "not connected — showing the copy saved on this device" line reads. Cached data
+// is real data, but only as of the last time the server confirmed it.
+describe('knowing the data on screen is unconfirmed', () => {
+  it('starts out saying nothing, because nothing has failed', async () => {
+    server.seed('Groceries')
+    const store = freshStore()
+    await store.fetchLists()
+    expect(store.stale).toBe(false)
+  })
+
+  it('says so when the index could not be reached, while still showing the lists', async () => {
+    const seeded = server.seed('Groceries')
+    const store = freshStore()
+    await store.fetchLists()
+
+    server.offline = true
+    await expect(store.fetchLists()).rejects.toThrow()
+    expect(store.stale).toBe(true)
+    expect(store.visibleLists.map((l) => l.id)).toEqual([seeded.id])
+  })
+
+  it('says so when a list opened from cache could not be confirmed', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    await store.open(seeded.id) // served from cache; the revalidation behind it fails
+    await settle(0)
+    expect(store.stale).toBe(true)
+    expect(store.items.map((i) => i.name)).toEqual(['Milk'])
+  })
+
+  it('stops saying so once the server has been heard from again', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+    server.offline = true
+    await store.fetchLists().catch(() => {})
+    expect(store.stale).toBe(true)
+
+    server.offline = false
+    await store.refreshOpen()
+    expect(store.stale).toBe(false)
+  })
+
+  it('is not raised by a save that could not be sent — that is the other direction', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+    expect(store.saveStatus).toBe('Saved on this device')
+    // Nobody told us the list changed elsewhere; we simply have something to send.
+    expect(store.stale).toBe(false)
+    expect(store.pendingCount).toBe(1)
+  })
+})
+
 describe('editing offline', () => {
   it('keeps an edit locally and pushes it on the next sync', async () => {
     const seeded = server.seed('Groceries', [{ name: 'Milk' }])

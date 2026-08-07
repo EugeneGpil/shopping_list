@@ -30,6 +30,8 @@
         <template #prepend><q-icon name="search" /></template>
       </q-input>
 
+      <StaleDataNotice />
+
       <ShoppingListSaveStatus />
 
       <!-- Rows. `update:model-value` rather than `v-model`, so the reordered array goes
@@ -108,6 +110,7 @@ import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
 import ShoppingListRow from 'src/components/ShoppingListRow.vue'
 import ShoppingListSaveStatus from 'src/components/ShoppingListSaveStatus.vue'
 import ShoppingListUnavailable from 'src/components/ShoppingListUnavailable.vue'
+import StaleDataNotice from 'src/components/StaleDataNotice.vue'
 import { useRowRefs } from 'src/composables/useRowRefs'
 import { useUndoRedoShortcuts } from 'src/composables/useUndoRedoShortcuts'
 import { useFlushOnHide } from 'src/composables/useFlushOnHide'
@@ -221,9 +224,13 @@ openList(route.params.id)
 // run again — without this, switching lists would keep showing the old one.
 watch(() => route.params.id, openList)
 
-// A no-op when the list did open — only a list we could not reach is worth retrying.
+// Two cases, and only these two. A list we could not reach at all is worth opening again;
+// one that opened from cache and was never confirmed is worth asking about again, which is
+// also the only thing that can retire the "not connected" notice above it. A list that
+// opened normally needs neither just because the connection blinked.
 useRetryWhenOnline(() => {
   if (loadFailed.value) retry()
+  else if (store.stale) store.refreshOpen()
 })
 
 // The debounced save outlives this page, so a pending one has to be fired on the way out

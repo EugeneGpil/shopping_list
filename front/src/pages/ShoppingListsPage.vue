@@ -25,6 +25,10 @@
 
     <q-inner-loading :showing="loading" />
 
+    <!-- The two directions, and they are independent: this one is what we may not have
+         heard from the server, the one below is what the server has not heard from us. -->
+    <StaleDataNotice />
+
     <!-- Changes are kept locally and pushed when there is a connection, so the only thing
          worth saying is that some are still waiting. Silence would read as "saved". -->
     <div v-if="store.pendingCount" class="row items-center q-gutter-xs q-mb-sm text-grey">
@@ -101,6 +105,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
+import StaleDataNotice from 'src/components/StaleDataNotice.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
@@ -169,9 +174,11 @@ function remove(list) {
 }
 
 // Only worth a retry if the last attempt actually failed — a successful index does not
-// need refetching just because the connection blinked.
+// need refetching just because the connection blinked. `stale` is part of that: falling
+// back to the cached lists leaves `loadFailed` false, and without this the notice saying
+// they are unconfirmed would still be true and never get a chance to stop being true.
 useRetryWhenOnline(() => {
-  if (loadFailed.value) load()
+  if (loadFailed.value || store.stale) load()
 })
 
 async function onLogout() {

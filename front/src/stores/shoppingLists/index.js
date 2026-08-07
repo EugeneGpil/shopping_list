@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { api } from 'src/api'
+import { api, isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
 import { createCollection } from './collection'
 import { createPersistence, SAVE_STATUS } from './persistence'
@@ -46,6 +46,11 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
   const orderDirty = ref(false)
   const openId = ref(null)
   const saveStatus = ref('')
+  // The last read of the server's copy did not get through, so everything on screen is
+  // whatever was last saved to this device — right at the time it was written, and of
+  // unknown age since. Deliberately one flag for the whole store rather than per list: the
+  // thing that went wrong is the connection, and it went wrong for all of them.
+  const stale = ref(false)
   // The two states worth interrupting for: a real failure, and an edit that lost to a
   // newer copy. "Saved on this device" is not one of them — that is normal offline life.
   const saveFailed = computed(
@@ -248,6 +253,22 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     pushOrder: sync.pushOrder,
   })
 
+  /**
+   * The index read, with the staleness flag around it. Wrapped here rather than folded into
+   * `collection.js` so that module keeps knowing only about the collection, and so the
+   * failure still reaches the page exactly as it did — the page decides between "show the
+   * cached lists" and "we have nothing".
+   */
+  async function fetchLists() {
+    try {
+      await collection.fetchLists()
+      stale.value = false
+    } catch (err) {
+      if (isNetworkError(err)) stale.value = true
+      throw err
+    }
+  }
+
   const find = (id) => lists.value.find((l) => l.id === id)
 
   function forget(id) {
@@ -276,6 +297,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     if (!record?.serverId) return
     try {
       const { data } = await api.get(`shopping-list?list_id=${record.serverId}`)
+      stale.value = false
       if (record.dirty) {
         if ((data.version ?? null) !== record.version) {
           sync.adopt(record, data)
@@ -284,10 +306,19 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
         return
       }
       if (pristine && openId.value === record.id) sync.adopt(record, data)
-    } catch {
+    } catch (err) {
       // Offline, or gone: the cached copy is exactly what the user is already looking at.
+      // Worth saying, though — it is a copy of unknown age from here on.
+      if (isNetworkError(err)) stale.value = true
     }
   }
+
+  /**
+   * Ask about the open list again. For a reconnect: what is on screen was read from cache
+   * and never confirmed, and nothing else would go back for it — `open()` is not the way,
+   * as it would reset `pristine` and let a background refresh swap rows under a caret.
+   */
+  const refreshOpen = () => (openId.value == null ? undefined : revalidate(openId.value))
 
   /**
    * Make `id` the open list. Returns the key of the blank row created for an empty list
@@ -330,6 +361,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
       // answered 401 — which this page reads as final and leaves. See `retrySync`.
       await useAuthStore().retrySync()
       const { data } = await api.get(`shopping-list?list_id=${serverId}`)
+      stale.value = false
       const fresh = recordFromApi(data)
       if (record) Object.assign(record, fresh, { id: record.id })
       else lists.value.push(fresh)
@@ -351,6 +383,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     lists.value = []
     orderDirty.value = false
     openId.value = null
+    stale.value = false
     saveStatus.value = ''
     // After the mutations, not before: each one arms the write, and the whole point here is
     // that nothing gets written back.
@@ -370,6 +403,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     saveStatus,
     saveFailed,
     pendingCount,
+    stale,
     syncing: sync.syncing,
     canUndo: history.canUndo,
     canRedo: history.canRedo,
@@ -378,10 +412,11 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     clear,
     // what another tab wrote; called by the `storage` listener above, and directly by tests
     refreshFromStorage,
+    refreshOpen,
     flush: persistence.flush,
     stopSaving: persistence.stopSaving,
     // the collection
-    fetchLists: collection.fetchLists,
+    fetchLists,
     createList: collection.createList,
     deleteList: collection.deleteList,
     reorderLists: collection.reorderLists,
