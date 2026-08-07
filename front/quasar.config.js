@@ -98,7 +98,13 @@ export default defineConfig((ctx) => {
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#framework
     framework: {
-      config: {},
+      config: {
+        // Follow the OS, and keep following it: 'auto' has Quasar watch
+        // `prefers-color-scheme` for the life of the session, so a phone switching to
+        // dark at sunset switches the app with it. There is deliberately no in-app
+        // toggle — the setting the user already made is the answer.
+        dark: 'auto',
+      },
 
       // iconSet: 'material-icons', // Quasar icon set
       // lang: 'en-US', // Quasar language pack
