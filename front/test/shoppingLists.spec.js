@@ -252,8 +252,18 @@ describe('totalling a list of numbers', () => {
     expect(store.numericTotal).toBe(67)
   })
 
-  it('skips blank rows instead of refusing to total', async () => {
-    const store = await openTally(['10', '', '5'])
+  it('skips blank rows instead of refusing to total, wherever they sit', async () => {
+    const store = await openTally(['', '10', '', '5', ''])
+    expect(store.numericTotal).toBe(15)
+  })
+
+  it('totals a single number surrounded by blanks', async () => {
+    const store = await openTally(['', '42', ''])
+    expect(store.numericTotal).toBe(42)
+  })
+
+  it('skips a row that is only whitespace', async () => {
+    const store = await openTally(['10', '   ', '5'])
     expect(store.numericTotal).toBe(15)
   })
 
