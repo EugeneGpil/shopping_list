@@ -8,7 +8,17 @@ import { createRow } from './record'
  * The insert helpers return the new row's key so the caller can move focus to it —
  * focus is a DOM concern and stays in the page.
  */
-export function createRows({ current, record, scheduleSave, markDirty }) {
+/**
+ * Group digits in threes with `_`, which is the separator the total already reads back:
+ * 1000000 becomes "1_000_000". The sign sits outside the grouping, so -1000000 becomes
+ * "-1_000_000" and stays a number to `numericTotal`.
+ */
+export function withSeparators(n) {
+  const sign = n < 0 ? '-' : ''
+  return sign + String(Math.abs(n)).replace(/\B(?=(\d{3})+$)/g, '_')
+}
+
+export function createRows({ current, record, scheduleSave, markDirty, numericTotal }) {
   /** The open list's rows, or null when nothing is open or nothing is loaded yet. */
   const rows = () => current.value?.items ?? null
   const rowAt = (index) => rows()?.[index] ?? null
@@ -141,6 +151,29 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
     return { key: above._key, caret }
   }
 
+  /**
+   * Collapse a list that has been added up into its answer: every row goes, one row with
+   * the total takes their place. The counting is done at that point and the rows are
+   * working notes — this is the "= 1_000_000" line you would write under a column of
+   * figures, except it replaces the column instead of growing it.
+   *
+   * Only ever available where the total is (see `numericTotal`), so there is no case where
+   * this could throw away rows it could not add up. It is one undo step like any other
+   * edit, which is what makes it safe to offer for a whole list at once.
+   *
+   * Returns the new row's key, or null when there was no total to squash to.
+   */
+  function squashRows() {
+    const list = rows()
+    const total = numericTotal?.value ?? null
+    if (!list || total === null) return null
+    record()
+    const row = createRow({ name: withSeparators(total) })
+    list.splice(0, list.length, row)
+    scheduleSave()
+    return row._key
+  }
+
   function removeRow(index) {
     const list = rows()
     if (!list || !list[index]) return
@@ -167,6 +200,7 @@ export function createRows({ current, record, scheduleSave, markDirty }) {
     addRowAfter,
     splitRow,
     mergeRowUp,
+    squashRows,
     removeRow,
     reorder,
   }

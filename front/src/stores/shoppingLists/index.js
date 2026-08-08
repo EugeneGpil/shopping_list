@@ -242,6 +242,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     record: history.record,
     scheduleSave: persistence.scheduleSave,
     markDirty,
+    numericTotal,
   })
 
   const settings = createSettings({ current, save: persistence.save })
@@ -443,6 +444,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     addRowAfter: rows.addRowAfter,
     splitRow: rows.splitRow,
     mergeRowUp: rows.mergeRowUp,
+    squashRows: rows.squashRows,
     removeRow: rows.removeRow,
     reorder: rows.reorder,
   }

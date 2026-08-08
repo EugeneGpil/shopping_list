@@ -92,7 +92,28 @@
         class="row items-center justify-between q-mt-md q-px-sm text-subtitle1"
       >
         <span class="text-grey-7">Total</span>
-        <span class="text-weight-medium">{{ store.numericTotal }}</span>
+        <div class="row items-center no-wrap q-gutter-sm">
+          <span class="text-weight-medium">{{ store.numericTotal }}</span>
+          <!-- The counting is done, so put the answer where the figures were. Left
+               undoable rather than behind a confirmation: Ctrl+Z brings the rows back,
+               and the store records it as one step. Disabled under a search for the same
+               reason "Add item" is — it would act on rows that are not on screen, and
+               here that means deleting them. -->
+          <q-btn
+            flat
+            dense
+            no-caps
+            icon="compress"
+            label="Squash"
+            color="primary"
+            :disable="!!query"
+            @click="store.squashRows()"
+          >
+            <q-tooltip>{{
+              query ? 'Clear the search to squash' : 'Replace every row with the total'
+            }}</q-tooltip>
+          </q-btn>
+        </div>
       </div>
 
       <div v-if="visibleCount === 0" class="text-grey text-center q-my-lg">

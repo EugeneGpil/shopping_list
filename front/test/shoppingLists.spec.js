@@ -377,6 +377,66 @@ describe('totalling a list of numbers', () => {
   })
 })
 
+// The button under the total: the figures go, the answer stays. Offered exactly where the
+// total is, so the cases that show no total are the cases that must not squash.
+describe('squashing a totalled list into one row', () => {
+  async function openTally(names) {
+    const store = await openWith(names)
+    await store.toggleQuantity()
+    return store
+  }
+
+  it('replaces every row with the total, grouped in threes by "_"', async () => {
+    const store = await openTally(['400_000', '600_000'])
+    store.squashRows()
+    expect(names(store)).toEqual(['1_000_000'])
+  })
+
+  it('leaves a total under four digits ungrouped', async () => {
+    const store = await openTally(['100', '-40', '7'])
+    store.squashRows()
+    expect(names(store)).toEqual(['67'])
+  })
+
+  it('keeps the sign outside the grouping', async () => {
+    const store = await openTally(['-2_000_000', '500'])
+    store.squashRows()
+    expect(names(store)).toEqual(['-1_999_500'])
+  })
+
+  it('leaves a row that still totals to the same number', async () => {
+    const store = await openTally(['50_000', '1_500', '', '20'])
+    const before = store.numericTotal
+    store.squashRows()
+    expect(store.numericTotal).toBe(before)
+  })
+
+  it('drops the blank rows with the rest', async () => {
+    const store = await openTally(['', '10', '', '5', ''])
+    store.squashRows()
+    expect(store.items).toHaveLength(1)
+  })
+
+  it('is one undo step', async () => {
+    const store = await openTally(['10', '5'])
+    store.squashRows()
+    store.undo()
+    expect(names(store)).toEqual(['10', '5'])
+  })
+
+  it('does nothing to a list that has no total', async () => {
+    const store = await openTally(['10', 'Milk'])
+    expect(store.squashRows()).toBeNull()
+    expect(names(store)).toEqual(['10', 'Milk'])
+  })
+
+  it('does nothing while there is a quantity column', async () => {
+    const store = await openWith(['100', '-40'])
+    expect(store.squashRows()).toBeNull()
+    expect(names(store)).toEqual(['100', '-40'])
+  })
+})
+
 describe('creating and deleting offline', () => {
   it('creates a usable list offline and pushes it, without changing its local id', async () => {
     const store = freshStore()
