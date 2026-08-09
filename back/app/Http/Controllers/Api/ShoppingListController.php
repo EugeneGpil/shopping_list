@@ -11,6 +11,22 @@ use Illuminate\Support\Facades\DB;
 
 class ShoppingListController extends Controller
 {
+    /**
+     * The cap on any field holding user content.
+     *
+     * This is **not** a content rule. Once a client encrypts (`docs/go_encrypted.md`), what
+     * arrives here is base64 of AES-GCM and the server cannot say anything about the text
+     * inside it — not its length, not whether it is text at all. What is left is a guard on
+     * request size, and that is all this is now.
+     *
+     * Where the number comes from: 255 characters of plaintext is up to 1020 bytes in UTF-8,
+     * plus a 12-byte IV and a 16-byte tag, base64'd — about 1400. 2048 clears that with room
+     * for the encoding to change, and is still small enough that a runaway client cannot post
+     * megabytes an item. The matching columns are `text` (migration
+     * 2026_08_09_000002), so nothing truncates below this.
+     */
+    private const MAX_FIELD = 2048;
+
     public function index(Request $request): JsonResponse
     {
         // `id` breaks ties: rows sharing a position would otherwise come back in whatever
@@ -50,7 +66,9 @@ class ShoppingListController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $data = $request->validate(['name' => 'required|string|max:255']);
+        // `store` is on the encrypted path too — a list created after encryption is switched
+        // on arrives here already ciphertext — so it takes the same cap as `update`.
+        $data = $request->validate(['name' => 'required|string|max:'.self::MAX_FIELD]);
 
         // A new list goes last. Without this every list is created at position 0 and the
         // whole page orders arbitrarily.
@@ -71,12 +89,12 @@ class ShoppingListController extends Controller
     public function update(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'name' => 'sometimes|required|string|max:255',
+            'name' => 'sometimes|required|string|max:'.self::MAX_FIELD,
             'show_quantity' => 'sometimes|boolean',
             'show_checkbox' => 'sometimes|boolean',
             'items' => 'sometimes|array',
-            'items.*.name' => 'nullable|string|max:255',
-            'items.*.quantity' => 'nullable|string|max:255',
+            'items.*.name' => 'nullable|string|max:'.self::MAX_FIELD,
+            'items.*.quantity' => 'nullable|string|max:'.self::MAX_FIELD,
             'items.*.checked' => 'nullable|boolean',
             // The `version` the client's copy was based on. Optional: a client that does
             // not track versions keeps the old last-write-wins behaviour.
