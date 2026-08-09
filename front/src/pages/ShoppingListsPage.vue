@@ -20,8 +20,24 @@
         :loading="creating"
         unelevated
       />
-      <q-btn flat round icon="logout" @click="onLogout" />
+      <q-btn flat round icon="more_vert">
+        <q-menu auto-close>
+          <q-list style="min-width: 200px">
+            <q-item clickable @click="importing = true">
+              <q-item-section avatar><q-icon name="download" /></q-item-section>
+              <q-item-section>Import from Google Keep</q-item-section>
+            </q-item>
+            <q-separator />
+            <q-item clickable @click="onLogout">
+              <q-item-section avatar><q-icon name="logout" /></q-item-section>
+              <q-item-section>Log out</q-item-section>
+            </q-item>
+          </q-list>
+        </q-menu>
+      </q-btn>
     </q-form>
+
+    <ImportFromKeepDialog v-model="importing" />
 
     <q-inner-loading :showing="loading" />
 
@@ -105,6 +121,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
+import ImportFromKeepDialog from 'src/components/ImportFromKeepDialog.vue'
 import StaleDataNotice from 'src/components/StaleDataNotice.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
@@ -116,6 +133,7 @@ const authStore = useAuthStore()
 const store = useShoppingListsStore()
 
 const newName = ref('')
+const importing = ref(false)
 const loading = ref(false)
 const creating = ref(false)
 const loadFailed = ref(false)

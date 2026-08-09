@@ -1,6 +1,6 @@
 import { api, isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
-import { localRecord, recordFromApi, recordFromIndexEntry } from './record'
+import { createRow, localRecord, recordFromApi, recordFromIndexEntry } from './record'
 
 /**
  * The collection itself: fetching the index, creating, deleting, reordering.
@@ -75,6 +75,32 @@ export function createCollection({ lists, orderDirty, pushDelete, pushOrder }) {
   }
 
   /**
+   * Add several ready-made lists at once, as an import does.
+   *
+   * They are born exactly like a list created offline — a temp id and `dirty` — so nothing
+   * here talks to the server: `sync` sees new records and creates each one, then PUTs its
+   * items, using the same path every other write uses. That is what makes an import of
+   * twenty lists survive a dead connection halfway through, and why importing is not
+   * something that can half-fail.
+   *
+   * @param {{ title: string, items: string[] }[]} incoming
+   */
+  function importLists(incoming) {
+    const records = incoming.map(({ title, items }) => ({
+      ...localRecord(title),
+      items: items.map((name) => createRow({ name })),
+      items_count: items.length,
+      // Keep has no quantity, so every imported row would carry an empty column.
+      show_quantity: false,
+    }))
+    lists.value.push(...records)
+    // The new lists sit at the end here, and the server has to be told that too — without
+    // it they would land wherever the server's own numbering put them.
+    orderDirty.value = true
+    return records
+  }
+
+  /**
    * Delete a list. Tombstoned first so it leaves the screen at once, then sent. Offline the
    * flag *is* the queue — and because `fetchLists` keeps tombstones, the next refresh
    * cannot resurrect it from the server index.
@@ -97,5 +123,5 @@ export function createCollection({ lists, orderDirty, pushDelete, pushOrder }) {
     await pushOrder()
   }
 
-  return { fetchLists, createList, deleteList, reorderLists }
+  return { fetchLists, createList, importLists, deleteList, reorderLists }
 }

@@ -419,6 +419,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     // the collection
     fetchLists,
     createList: collection.createList,
+    importLists: collection.importLists,
     deleteList: collection.deleteList,
     reorderLists: collection.reorderLists,
     // sync
