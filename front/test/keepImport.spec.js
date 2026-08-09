@@ -149,11 +149,27 @@ describe('note conversion', () => {
     expect(noteToCandidate(note, 'k').title).toBe('Keep 2025-01-03')
   })
 
-  // Keep stores a note as either a checklist or one block of text. Only the first has
-  // items; turning the second into a list means guessing that its lines are items, and in
-  // a real archive those notes are passwords, links and logs.
-  it('skips a note Keep stored as plain text', () => {
-    expect(noteToCandidate({ title: 'Notes', textContent: 'one\ntwo' }, 'k')).toBeNull()
+  // Keep stores a note as either a checklist or one block of text. The second has no items
+  // of its own, so its lines become them — marked as a different kind, because that is a
+  // guess and the dialog does not tick it by default.
+  it('turns a plain text note into one item per line', () => {
+    const candidate = noteToCandidate(
+      { title: 'Notes', textContent: 'one\r\n  two  \n\n\nthree' },
+      'k',
+    )
+
+    expect(candidate.kind).toBe('text')
+    expect(candidate.items).toEqual(['one', 'two', 'three'])
+    expect(candidate.droppedChecked).toBe(0)
+  })
+
+  it('marks a checklist as one', () => {
+    expect(noteToCandidate({ listContent: [{ text: 'milk' }] }, 'k').kind).toBe('list')
+  })
+
+  it('skips a note with neither items nor text', () => {
+    expect(noteToCandidate({ title: 'Empty' }, 'k')).toBeNull()
+    expect(noteToCandidate({ title: 'Blank', textContent: ' \n\n ' }, 'k')).toBeNull()
   })
 })
 
@@ -172,7 +188,6 @@ describe('candidates from an archive', () => {
         isArchived: true,
         listContent: [{ text: 'lamp' }],
       }),
-      'Takeout/Keep/text.json': checklist({ title: 'Passwords', textContent: 'hunter2' }),
     })
 
     const candidates = await candidatesFromZip(zip)
@@ -180,6 +195,40 @@ describe('candidates from an archive', () => {
     expect(candidates).toHaveLength(1)
     expect(candidates[0].title).toBe('Groceries')
     expect(candidates[0].items).toEqual(['milk'])
+  })
+
+  // The dialog ticks the two kinds as groups, which only reads as a group if its rows sit
+  // together.
+  it('puts the checklists ahead of the plain text notes', async () => {
+    const zip = makeZip({
+      'Takeout/Keep/text-new.json': JSON.stringify({
+        title: 'Text new',
+        createdTimestampUsec: 4_000_000_000_000_000,
+        textContent: 'a',
+      }),
+      'Takeout/Keep/list-old.json': JSON.stringify({
+        title: 'List old',
+        createdTimestampUsec: 1_000_000_000_000_000,
+        listContent: [{ text: 'x' }],
+      }),
+      'Takeout/Keep/text-old.json': JSON.stringify({
+        title: 'Text old',
+        createdTimestampUsec: 2_000_000_000_000_000,
+        textContent: 'b',
+      }),
+      'Takeout/Keep/list-new.json': JSON.stringify({
+        title: 'List new',
+        createdTimestampUsec: 3_000_000_000_000_000,
+        listContent: [{ text: 'y' }],
+      }),
+    })
+
+    expect((await candidatesFromZip(zip)).map((c) => c.title)).toEqual([
+      'List new',
+      'List old',
+      'Text new',
+      'Text old',
+    ])
   })
 
   it('orders the newest note first', async () => {

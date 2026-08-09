@@ -3,10 +3,10 @@ import { readZipEntries } from './zipEntries'
 /**
  * Turning a Google Takeout export into importable lists.
  *
- * Only Keep's **checklists** are offered — a note it stored as one block of text has no
- * items, and splitting it on newlines is a guess about what the note even is. In a real
- * archive those are overwhelmingly passwords, links and running logs, so they are left out
- * rather than listed and unticked.
+ * Keep stores a note as either a checklist or one block of text, and both are offered. A
+ * text note becomes one item per line, which is a guess about what the note is — in a real
+ * archive plenty of them are passwords, links and running logs — so the two kinds are kept
+ * apart as `kind` and the dialog leaves the text ones unticked by default.
  *
  * The other judgement: **checked items are dropped**. In Keep a ticked item is something
  * already bought, so carrying them over would import a list of things not to buy.
@@ -41,22 +41,28 @@ export function noteToCandidate(note, key) {
   // just as much not what someone is importing — and in a real export they outnumber the
   // active notes many times over, which buries the handful worth picking.
   if (!note || note.isTrashed || note.isArchived) return null
-  if (!Array.isArray(note.listContent)) return null
 
-  const items = note.listContent
-    .filter((entry) => !entry?.isChecked)
-    .map((entry) => clean(entry?.text))
-    .filter(Boolean)
+  const checklist = Array.isArray(note.listContent)
+  if (!checklist && typeof note.textContent !== 'string') return null
 
-  // Everything on it was ticked off, so there is nothing left to import.
+  const items = checklist
+    ? note.listContent
+        .filter((entry) => !entry?.isChecked)
+        .map((entry) => clean(entry?.text))
+        .filter(Boolean)
+    : // Blank lines are how a text note gets its paragraphs; they are separators, not items.
+      note.textContent.split(/\r\n|\r|\n/).map(clean).filter(Boolean)
+
+  // Everything on it was ticked off, or the note is empty — nothing left to import.
   if (!items.length) return null
 
   return {
     key,
+    kind: checklist ? 'list' : 'text',
     title: clean(note.title) || fallbackTitle(note),
     items,
     // Shown so a short list is not mistaken for the whole note.
-    droppedChecked: note.listContent.filter((entry) => entry?.isChecked).length,
+    droppedChecked: checklist ? note.listContent.filter((entry) => entry?.isChecked).length : 0,
   }
 }
 
@@ -87,6 +93,11 @@ export async function candidatesFromZip(arrayBuffer) {
       candidates.push({ ...candidate, createdAt: Number(note.createdTimestampUsec ?? 0) })
   }
 
-  candidates.sort((a, b) => b.createdAt - a.createdAt)
+  // Checklists first, then the text notes, each newest first: the two kinds are ticked as
+  // groups in the dialog, and a group checkbox over rows scattered through the list is a
+  // checkbox whose effect you cannot see.
+  candidates.sort((a, b) =>
+    a.kind === b.kind ? b.createdAt - a.createdAt : a.kind === 'list' ? -1 : 1,
+  )
   return candidates
 }

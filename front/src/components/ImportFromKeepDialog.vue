@@ -45,45 +45,55 @@
         <div class="text-body2 q-mt-md">Reading the archive…</div>
       </q-card-section>
 
-      <!-- Step 2: confirm what to import. Only active checklists get this far, so the list
-           is short and starts fully ticked; the items are previewed because a Keep note is
-           usually untitled and its name alone says nothing about what is in it. -->
+      <!-- Step 2: confirm what to import. The items are previewed because a Keep note is
+           usually untitled and its name alone says nothing about what is in it, and the two
+           kinds are ticked as groups — an archive can hold dozens of text notes and picking
+           through them one by one is the slow way to say "all of them" or "none". -->
       <template v-if="candidates.length && !parsing">
-        <q-card-section class="q-py-sm row items-center">
+        <q-card-section class="q-py-sm">
           <div class="text-body2">
             {{ selectedCount }} of {{ candidates.length }} selected
             <span v-if="droppedTotal" class="text-grey">
               · {{ droppedTotal }} ticked-off item(s) will be skipped
             </span>
           </div>
-          <q-space />
-          <q-btn
-            flat
-            dense
-            no-caps
-            size="sm"
-            :label="allSelected ? 'None' : 'All'"
-            @click="toggleAll"
-          />
+          <div class="row items-center q-gutter-x-md q-mt-xs">
+            <q-checkbox
+              v-for="g in groups"
+              :key="g.kind"
+              dense
+              size="sm"
+              :model-value="groupState(g)"
+              :label="`All ${g.label.toLowerCase()} (${g.candidates.length})`"
+              @update:model-value="toggleGroup(g)"
+            />
+          </div>
         </q-card-section>
 
         <q-separator />
 
         <q-card-section class="q-pa-none" style="max-height: 45vh; overflow-y: auto">
           <q-list separator>
-            <q-item v-for="c in candidates" :key="c.key" clickable @click="toggle(c)">
-              <q-item-section side top>
-                <q-checkbox :model-value="selected.has(c.key)" @update:model-value="toggle(c)" />
-              </q-item-section>
-              <q-item-section>
-                <q-item-label>{{ c.title }}</q-item-label>
-                <q-item-label caption lines="2">{{ c.items.join(', ') }}</q-item-label>
-                <q-item-label caption class="text-grey-6">
-                  {{ c.items.length }} item(s)
-                  <span v-if="c.droppedChecked">· {{ c.droppedChecked }} ticked off, skipped</span>
-                </q-item-label>
-              </q-item-section>
-            </q-item>
+            <template v-for="g in groups" :key="g.kind">
+              <!-- Named only when both kinds are present; over a single group the heading
+                   is a label for something there is no alternative to. -->
+              <q-item-label v-if="groups.length > 1" header class="q-py-sm">
+                {{ g.label }}
+              </q-item-label>
+              <q-item v-for="c in g.candidates" :key="c.key" clickable @click="toggle(c)">
+                <q-item-section side top>
+                  <q-checkbox :model-value="selected.has(c.key)" @update:model-value="toggle(c)" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ c.title }}</q-item-label>
+                  <q-item-label caption lines="2">{{ c.items.join(', ') }}</q-item-label>
+                  <q-item-label caption class="text-grey-6">
+                    {{ c.items.length }} {{ c.kind === 'text' ? 'line(s)' : 'item(s)' }}
+                    <span v-if="c.droppedChecked">· {{ c.droppedChecked }} ticked off, skipped</span>
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
           </q-list>
         </q-card-section>
 
@@ -124,7 +134,35 @@ const candidates = ref([])
 const selected = ref(new Set())
 
 const selectedCount = computed(() => selected.value.size)
-const allSelected = computed(() => selectedCount.value === candidates.value.length)
+
+const ofKind = (kind) => candidates.value.filter((c) => c.kind === kind)
+
+/** Only the kinds this archive actually holds, so an empty group is never offered. */
+const groups = computed(() =>
+  [
+    { kind: 'list', label: 'Lists', candidates: ofKind('list') },
+    { kind: 'text', label: 'Plain text notes', candidates: ofKind('text') },
+  ].filter((g) => g.candidates.length),
+)
+
+/** `null` is Quasar's indeterminate — the honest state when only some of a group is on. */
+function groupState(group) {
+  const on = group.candidates.filter((c) => selected.value.has(c.key)).length
+  if (!on) return false
+  return on === group.candidates.length ? true : null
+}
+
+function toggleGroup(group) {
+  const next = new Set(selected.value)
+  // Partly-on reads as "not all of it yet", so the useful move is to finish selecting it.
+  const turnOn = groupState(group) !== true
+  for (const c of group.candidates) {
+    if (turnOn) next.add(c.key)
+    else next.delete(c.key)
+  }
+  selected.value = next
+}
+
 const droppedTotal = computed(() =>
   candidates.value
     .filter((c) => selected.value.has(c.key))
@@ -146,9 +184,13 @@ async function parse(picked) {
   try {
     const found = await candidatesFromZip(await picked.arrayBuffer())
     candidates.value = found
-    // Everything listed is an active checklist, which is what someone importing into a
-    // shopping app came for — so the work left is unticking, not ticking.
-    selected.value = new Set(found.map((c) => c.key))
+    // A checklist is what someone importing into a shopping app came for, so those start
+    // ticked. A text note only became a list by splitting it on newlines — that guess is
+    // the user's to confirm, and in an archive of any size most of them are not shopping.
+    // Unless they are all there is, in which case starting with nothing selected would be
+    // an empty dialog over a file the user picked on purpose.
+    const lists = found.filter((c) => c.kind === 'list')
+    selected.value = new Set((lists.length ? lists : found).map((c) => c.key))
   } catch (err) {
     // The archive is the user's to fix — a wrong export, or a file that is not one at all —
     // so say which it was rather than a generic failure.
@@ -163,10 +205,6 @@ function toggle(candidate) {
   const next = new Set(selected.value)
   if (!next.delete(candidate.key)) next.add(candidate.key)
   selected.value = next
-}
-
-function toggleAll() {
-  selected.value = allSelected.value ? new Set() : new Set(candidates.value.map((c) => c.key))
 }
 
 function confirm() {
