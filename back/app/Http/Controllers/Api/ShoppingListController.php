@@ -13,9 +13,12 @@ class ShoppingListController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        // `id` breaks ties: rows sharing a position would otherwise come back in whatever
+        // order Postgres happened to produce, which visibly reshuffles between requests.
         $lists = $request->user()->shoppingLists()
             ->withCount('items')
             ->orderBy('position')
+            ->orderBy('id')
             ->get(['id', 'name', 'position', 'created_at', 'version']);
 
         return ApiResponse::success($lists);
@@ -48,6 +51,10 @@ class ShoppingListController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate(['name' => 'required|string|max:255']);
+
+        // A new list goes last. Without this every list is created at position 0 and the
+        // whole page orders arbitrarily.
+        $data['position'] = (int) $request->user()->shoppingLists()->max('position') + 1;
 
         $list = $request->user()->shoppingLists()->create($data);
 
