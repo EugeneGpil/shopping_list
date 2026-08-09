@@ -51,7 +51,10 @@ export function noteToCandidate(note, key) {
         .map((entry) => clean(entry?.text))
         .filter(Boolean)
     : // Blank lines are how a text note gets its paragraphs; they are separators, not items.
-      note.textContent.split(/\r\n|\r|\n/).map(clean).filter(Boolean)
+      note.textContent
+        .split(/\r\n|\r|\n/)
+        .map(clean)
+        .filter(Boolean)
 
   // Everything on it was ticked off, or the note is empty — nothing left to import.
   if (!items.length) return null

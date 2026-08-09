@@ -1,5 +1,6 @@
 import { api, isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
+import { isUnlocked, sealField } from './encryption'
 import { createRow, localRecord, recordFromApi, recordFromIndexEntry } from './record'
 
 /**
@@ -16,12 +17,14 @@ export function createCollection({ lists, orderDirty, pushDelete, pushOrder }) {
    * Take what the index endpoint can tell us about a list we already hold. It carries no
    * items, which is what makes this narrower than it looks.
    */
-  function applyIndexEntry(known, entry) {
+  async function applyIndexEntry(known, entry) {
     known.items_count = entry.items_count
     // Local content the server has not accepted yet outranks anything it tells us; the
     // conflict is settled at push time, where the version check lives.
     if (known.dirty) return
-    known.name = entry.name
+    // Through the seam, because an index name is ciphertext when the list is encrypted.
+    known.name = (await recordFromIndexEntry(entry)).name
+    known.encrypted = !!entry.encrypted
     // Only a full read may refresh the version our items are based on. Adopting it here
     // would make a stale item set look current, and the next push would then be accepted
     // and overwrite newer rows.
@@ -41,13 +44,18 @@ export function createCollection({ lists, orderDirty, pushDelete, pushOrder }) {
     const { data } = await api.get('shopping-lists')
 
     const matched = new Set()
-    const fromServer = data.map((entry) => {
-      const known = lists.value.find((l) => l.serverId === entry.id)
-      if (!known) return recordFromIndexEntry(entry)
-      matched.add(known.id)
-      applyIndexEntry(known, entry)
-      return known
-    })
+    // `Promise.all` rather than a sequential loop: each entry's name is decrypted
+    // independently, and a collection of twenty would otherwise be twenty round trips
+    // through WebCrypto in series.
+    const fromServer = await Promise.all(
+      data.map(async (entry) => {
+        const known = lists.value.find((l) => l.serverId === entry.id)
+        if (!known) return recordFromIndexEntry(entry)
+        matched.add(known.id)
+        await applyIndexEntry(known, entry)
+        return known
+      }),
+    )
     // Lists the server cannot know about yet: created here and not pushed, or tombstoned
     // and not yet accepted. Both must outlive a refresh or the queue would be lost.
     const localOnly = lists.value.filter(
@@ -62,8 +70,15 @@ export function createCollection({ lists, orderDirty, pushDelete, pushOrder }) {
    */
   async function createList(name) {
     try {
-      const { data } = await api.post('shopping-lists', { name })
-      const record = recordFromApi(data)
+      // Encrypted here rather than left to the first `sync`. Sending it plaintext and
+      // correcting it a moment later would not undo anything: Postgres keeps the old row
+      // version until it is vacuumed, so the plaintext name would stay on disk after the
+      // overwrite (§8 lists exactly that as a leak worth avoiding).
+      const { data } = await api.post(
+        'shopping-lists',
+        isUnlocked() ? { name: await sealField(name), encrypted: true } : { name },
+      )
+      const record = await recordFromApi(data)
       lists.value.push(record)
       return record
     } catch (err) {

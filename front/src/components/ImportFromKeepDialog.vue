@@ -89,7 +89,9 @@
                   <q-item-label caption lines="2">{{ c.items.join(', ') }}</q-item-label>
                   <q-item-label caption class="text-grey-6">
                     {{ c.items.length }} {{ c.kind === 'text' ? 'line(s)' : 'item(s)' }}
-                    <span v-if="c.droppedChecked">· {{ c.droppedChecked }} ticked off, skipped</span>
+                    <span v-if="c.droppedChecked"
+                      >· {{ c.droppedChecked }} ticked off, skipped</span
+                    >
                   </q-item-label>
                 </q-item-section>
               </q-item>

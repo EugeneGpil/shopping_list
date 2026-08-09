@@ -22,9 +22,14 @@ import { payloadOf, recordFromApi } from './record'
 export function createSync({ lists, orderDirty, forget }) {
   const syncing = ref(false)
 
-  /** Take the server's copy of a list, keeping this record's local identity. */
-  function adopt(record, data) {
-    Object.assign(record, recordFromApi(data), { id: record.id })
+  /**
+   * Take the server's copy of a list, keeping this record's local identity.
+   *
+   * Async because the copy may be ciphertext and `recordFromApi` is the seam that opens it
+   * (§4). Every caller must await it, or the record is read before it has been replaced.
+   */
+  async function adopt(record, data) {
+    Object.assign(record, await recordFromApi(data), { id: record.id })
   }
 
   function reportConflict(record) {
@@ -46,24 +51,36 @@ export function createSync({ lists, orderDirty, forget }) {
     // A tombstoned list has nothing worth sending; `pushDelete` owns it from here.
     if (!record || record.pendingDelete) return 'saved'
     try {
+      // Built once, before the create: the name goes out encrypted on both requests, and
+      // building it twice would encrypt it under two IVs for no reason.
+      const payload = await payloadOf(record)
+
       if (!record.serverId) {
-        const { data } = await api.post('shopping-lists', { name: record.name })
+        const { data } = await api.post('shopping-lists', {
+          name: payload.name,
+          // Without this the row is created as plaintext and only corrected by the PUT that
+          // follows — a window in which a crash leaves ciphertext flagged as readable.
+          ...(payload.encrypted ? { encrypted: true } : {}),
+        })
         record.serverId = data.id
         record.version = data.version ?? null
       }
       const { data } = await api.put(`shopping-list?list_id=${record.serverId}`, {
-        ...payloadOf(record),
+        ...payload,
         base_version: record.version,
       })
       record.version = data.version ?? null
       record.items_count = (data.items ?? []).length
+      // What the server now holds. Without this a record that was just encrypted would still
+      // describe itself as plaintext until the next read.
+      record.encrypted = !!data.encrypted
       record.dirty = false
       return 'saved'
     } catch (err) {
       if (err.status === 409) {
         // The server sent the copy that won, so there is nothing more to ask it for.
         const winner = err.body?.data
-        if (winner) adopt(record, winner)
+        if (winner) await adopt(record, winner)
         else record.dirty = false // cannot adopt without it; stop trying to push over it
         reportConflict(record)
         return 'conflict'

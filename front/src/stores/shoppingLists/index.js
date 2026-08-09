@@ -301,12 +301,12 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
       stale.value = false
       if (record.dirty) {
         if ((data.version ?? null) !== record.version) {
-          sync.adopt(record, data)
+          await sync.adopt(record, data)
           sync.reportConflict(record)
         }
         return
       }
-      if (pristine && openId.value === record.id) sync.adopt(record, data)
+      if (pristine && openId.value === record.id) await sync.adopt(record, data)
     } catch (err) {
       // Offline, or gone: the cached copy is exactly what the user is already looking at.
       // Worth saying, though — it is a copy of unknown age from here on.
@@ -363,7 +363,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
       await useAuthStore().retrySync()
       const { data } = await api.get(`shopping-list?list_id=${serverId}`)
       stale.value = false
-      const fresh = recordFromApi(data)
+      const fresh = await recordFromApi(data)
       if (record) Object.assign(record, fresh, { id: record.id })
       else lists.value.push(fresh)
     } catch (err) {

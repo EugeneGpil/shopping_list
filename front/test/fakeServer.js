@@ -14,15 +14,21 @@ export function makeServer() {
     offline: false,
     nextId: 1,
     requests: [],
+    // The raw request bodies, exactly as they went over the wire. `requests` records only
+    // method and path; asserting that a plaintext name never left the device needs the bytes.
+    sent: [],
   }
 
-  server.seed = (name, items = []) => {
+  server.seed = (name, items = [], { encrypted = false } = {}) => {
     const list = {
       id: server.nextId++,
       name,
       position: server.lists.length,
       show_quantity: true,
       show_checkbox: true,
+      // Opaque here, exactly as in the real controller: the flag is stored and echoed, and
+      // nothing on this side ever looks at what the strings contain.
+      encrypted,
       version: 0,
       items: items.map((i) => ({
         name: i.name ?? '',
@@ -51,6 +57,7 @@ export function makeServer() {
     name: list.name,
     show_quantity: list.show_quantity,
     show_checkbox: list.show_checkbox,
+    encrypted: list.encrypted,
     version: list.version,
     items: list.items,
   })
@@ -75,13 +82,14 @@ export function makeServer() {
             position: l.position,
             created_at: 'c',
             version: l.version,
+            encrypted: l.encrypted,
             items_count: l.items.length,
           })),
       )
     }
 
     if (path === 'shopping-lists' && method === 'POST') {
-      return ok(present(server.seed(body.name)), 201)
+      return ok(present(server.seed(body.name, [], { encrypted: !!body.encrypted })), 201)
     }
 
     if (path === 'shopping-lists/order' && method === 'PUT') {
@@ -114,6 +122,9 @@ export function makeServer() {
         if (body.name !== undefined) list.name = body.name
         if (body.show_quantity !== undefined) list.show_quantity = body.show_quantity
         if (body.show_checkbox !== undefined) list.show_checkbox = body.show_checkbox
+        // `sometimes` in the real request class: absent leaves the flag as it was, which is
+        // what stops an older client relabelling an encrypted list as plaintext.
+        if (body.encrypted !== undefined) list.encrypted = body.encrypted
         if (body.items !== undefined) {
           list.items = body.items.map((i) => ({
             name: i.name ?? '',
@@ -144,6 +155,7 @@ export function makeServer() {
       const path = parsed.pathname.replace(/^\/api\//, '')
       const method = init.method ?? 'GET'
       server.requests.push(`${method} ${path}${parsed.search}`)
+      if (init.body !== undefined) server.sent.push({ method, path, raw: String(init.body) })
       return handle(
         method,
         path,

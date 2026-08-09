@@ -1,5 +1,15 @@
+import { isUnlocked, openField, sealField } from './encryption'
+
 /**
  * The shape of a list record, and the two translations between it and the API.
+ *
+ * **This is also the encryption seam** (`docs/go_encrypted.md` §4). `recordFromApi` and
+ * `recordFromIndexEntry` decrypt on the way in; `payloadOf` encrypts on the way out. Nothing
+ * above this file ever sees ciphertext — search, the row editor, undo, `numericTotal` all work
+ * on plaintext in memory exactly as before — and nothing below it ever sees plaintext.
+ *
+ * That is why these three functions are async while everything around them is not: WebCrypto
+ * has no synchronous API, so the seam is where the `await`s land.
  *
  * A record is what the app renders and what gets written to localStorage, so it carries
  * the sync bookkeeping alongside the data:
@@ -41,30 +51,60 @@ export function seedTempIds(records) {
   }
 }
 
+/**
+ * One field as it arrives from the server, made readable.
+ *
+ * The per-list `encrypted` flag decides, not the presence of a key: a mixed collection is
+ * normal mid-enable (§5), so every list is judged on its own flag. An empty or absent value
+ * is passed through — there is nothing to decrypt and no blob to fail on.
+ */
+const readField = (value, encrypted) =>
+  encrypted && value ? openField(value) : Promise.resolve(value)
+
 /** A full record from `GET/POST/PUT shopping-list`, which always includes the items. */
-export function recordFromApi(data) {
+export async function recordFromApi(data) {
+  const encrypted = !!data.encrypted
+  const items = data.items ?? []
+
+  const [name, rows] = await Promise.all([
+    readField(data.name, encrypted),
+    Promise.all(
+      items.map(async (i) =>
+        createRow({
+          name: (await readField(i.name, encrypted)) ?? '',
+          quantity: (await readField(i.quantity, encrypted)) ?? '',
+          checked: !!i.checked,
+        }),
+      ),
+    ),
+  ])
+
   return {
     id: data.id,
     serverId: data.id,
-    name: data.name,
+    name,
     show_quantity: data.show_quantity ?? true,
     show_checkbox: data.show_checkbox ?? true,
-    items_count: (data.items ?? []).length,
-    items: (data.items ?? []).map((i) =>
-      createRow({ name: i.name, quantity: i.quantity ?? '', checked: !!i.checked }),
-    ),
+    items_count: items.length,
+    items: rows,
     version: data.version ?? null,
+    // Carried so the record remembers what the server holds. `payloadOf` does not read it —
+    // whether the *next* write is encrypted depends on whether this device has a key, not on
+    // what the list used to be — but the index needs it to know how to read a name.
+    encrypted,
     dirty: false,
     pendingDelete: false,
   }
 }
 
 /** What the index endpoint gives us: everything except the items. */
-export function recordFromIndexEntry(entry) {
+export async function recordFromIndexEntry(entry) {
+  const encrypted = !!entry.encrypted
+
   return {
     id: entry.id,
     serverId: entry.id,
-    name: entry.name,
+    name: await readField(entry.name, encrypted),
     show_quantity: true,
     show_checkbox: true,
     items_count: entry.items_count,
@@ -72,6 +112,7 @@ export function recordFromIndexEntry(entry) {
     // reason, and are replaced by the full read that happens when the list is opened.
     items: null,
     version: entry.version ?? null,
+    encrypted,
     dirty: false,
     pendingDelete: false,
   }
@@ -98,17 +139,45 @@ export function localRecord(name) {
  * The whole list as the API wants it. Everything local goes in one PUT — the endpoint
  * replaces the full item set anyway, so there is nothing to gain from partial writes and
  * a lot to gain from having exactly one write path.
+ *
+ * Encrypts when this device holds a key, and says so with `encrypted: true` in the same
+ * request as the ciphertext it describes — which is what makes an interrupted enable
+ * resumable rather than ambiguous (§5).
+ *
+ * The decision is "do we have a key", not "was this list already encrypted". That is what
+ * makes the enable pass in §6 nothing more than pushing every list: each one gets encrypted
+ * and flagged on its way out, and a list created after setup is born encrypted.
  */
-export function payloadOf(record) {
+export async function payloadOf(record) {
+  const rows = (record.items ?? []).map((r) => ({
+    name: r.name.trim(),
+    quantity: r.quantity?.trim() || null,
+    checked: !!r.checked,
+  }))
+
+  if (!isUnlocked()) {
+    return {
+      name: record.name,
+      show_quantity: !!record.show_quantity,
+      show_checkbox: !!record.show_checkbox,
+      items: rows,
+    }
+  }
+
   return {
-    name: record.name,
+    name: await sealField(record.name),
     show_quantity: !!record.show_quantity,
     show_checkbox: !!record.show_checkbox,
-    items: (record.items ?? []).map((r) => ({
-      name: r.name.trim(),
-      quantity: r.quantity?.trim() || null,
-      checked: !!r.checked,
-    })),
+    items: await Promise.all(
+      rows.map(async (r) => ({
+        name: await sealField(r.name),
+        // A blank quantity stays null rather than becoming ciphertext of "". The column is
+        // nullable, and encrypting nothing would only tell the server that the field exists.
+        quantity: r.quantity === null ? null : await sealField(r.quantity),
+        checked: r.checked,
+      })),
+    ),
+    encrypted: true,
   }
 }
 
