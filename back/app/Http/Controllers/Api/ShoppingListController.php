@@ -4,6 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\ApiResponse;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ShoppingList\DestroyShoppingListRequest;
+use App\Http\Requests\ShoppingList\ReorderShoppingListsRequest;
+use App\Http\Requests\ShoppingList\ShowShoppingListRequest;
+use App\Http\Requests\ShoppingList\StoreShoppingListRequest;
+use App\Http\Requests\ShoppingList\UpdateShoppingListRequest;
 use App\Models\ShoppingList;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,22 +16,6 @@ use Illuminate\Support\Facades\DB;
 
 class ShoppingListController extends Controller
 {
-    /**
-     * The cap on any field holding user content.
-     *
-     * This is **not** a content rule. Once a client encrypts (`docs/go_encrypted.md`), what
-     * arrives here is base64 of AES-GCM and the server cannot say anything about the text
-     * inside it — not its length, not whether it is text at all. What is left is a guard on
-     * request size, and that is all this is now.
-     *
-     * Where the number comes from: 255 characters of plaintext is up to 1020 bytes in UTF-8,
-     * plus a 12-byte IV and a 16-byte tag, base64'd — about 1400. 2048 clears that with room
-     * for the encoding to change, and is still small enough that a runaway client cannot post
-     * megabytes an item. The matching columns are `text` (migration
-     * 2026_08_09_000002), so nothing truncates below this.
-     */
-    private const MAX_FIELD = 2048;
-
     public function index(Request $request): JsonResponse
     {
         // `id` breaks ties: rows sharing a position would otherwise come back in whatever
@@ -40,12 +29,9 @@ class ShoppingListController extends Controller
         return ApiResponse::success($lists);
     }
 
-    public function reorder(Request $request): JsonResponse
+    public function reorder(ReorderShoppingListsRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'ids' => 'required|array',
-            'ids.*' => 'integer',
-        ]);
+        $data = $request->validated();
 
         $ownedIds = $request->user()->shoppingLists()->pluck('id')->all();
 
@@ -64,11 +50,9 @@ class ShoppingListController extends Controller
         return ApiResponse::success(message: 'Reordered');
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreShoppingListRequest $request): JsonResponse
     {
-        // `store` is on the encrypted path too — a list created after encryption is switched
-        // on arrives here already ciphertext — so it takes the same cap as `update`.
-        $data = $request->validate(['name' => 'required|string|max:'.self::MAX_FIELD]);
+        $data = $request->validated();
 
         // A new list goes last. Without this every list is created at position 0 and the
         // whole page orders arbitrarily.
@@ -79,27 +63,16 @@ class ShoppingListController extends Controller
         return ApiResponse::success($this->present($list), status: 201);
     }
 
-    public function show(Request $request): JsonResponse
+    public function show(ShowShoppingListRequest $request): JsonResponse
     {
         $list = $this->findOwned($request);
 
         return ApiResponse::success($this->present($list));
     }
 
-    public function update(Request $request): JsonResponse
+    public function update(UpdateShoppingListRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'name' => 'sometimes|required|string|max:'.self::MAX_FIELD,
-            'show_quantity' => 'sometimes|boolean',
-            'show_checkbox' => 'sometimes|boolean',
-            'items' => 'sometimes|array',
-            'items.*.name' => 'nullable|string|max:'.self::MAX_FIELD,
-            'items.*.quantity' => 'nullable|string|max:'.self::MAX_FIELD,
-            'items.*.checked' => 'nullable|boolean',
-            // The `version` the client's copy was based on. Optional: a client that does
-            // not track versions keeps the old last-write-wins behaviour.
-            'base_version' => 'sometimes|nullable|integer',
-        ]);
+        $data = $request->validated();
 
         $list = $this->findOwned($request);
         $conflict = false;
@@ -159,17 +132,22 @@ class ShoppingListController extends Controller
         return ApiResponse::success($this->present($list->fresh()));
     }
 
-    public function destroy(Request $request): JsonResponse
+    public function destroy(DestroyShoppingListRequest $request): JsonResponse
     {
         $this->findOwned($request)->delete();
 
         return ApiResponse::success(message: 'Deleted');
     }
 
+    /**
+     * The requested list, or a 404.
+     *
+     * `list_id` is validated by the request class of whichever endpoint called this, so by
+     * here it is known to be an integer. The scoping is the authorization: a list belonging to
+     * somebody else is not found, which is a better answer than "found, but forbidden".
+     */
     private function findOwned(Request $request): ShoppingList
     {
-        $request->validate(['list_id' => 'required|integer']);
-
         return $request->user()->shoppingLists()->findOrFail($request->integer('list_id'));
     }
 

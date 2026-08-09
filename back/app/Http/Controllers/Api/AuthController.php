@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\ApiResponse;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\FirebaseLoginRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,12 +15,10 @@ class AuthController extends Controller
 {
     public function __construct(private readonly Auth $auth) {}
 
-    public function firebase(Request $request): JsonResponse
+    public function firebase(FirebaseLoginRequest $request): JsonResponse
     {
-        $request->validate(['id_token' => 'required|string']);
-
         try {
-            $verified = $this->auth->verifyIdToken($request->id_token);
+            $verified = $this->auth->verifyIdToken($request->validated('id_token'));
         } catch (FailedToVerifyToken) {
             return ApiResponse::error('Invalid token', 401);
         }
