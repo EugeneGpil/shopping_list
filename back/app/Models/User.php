@@ -20,4 +20,10 @@ class User extends Authenticatable
     {
         return $this->hasMany(ShoppingList::class);
     }
+
+    /** One row per registered passkey, each holding the same data key wrapped differently. */
+    public function encryptionKeys(): HasMany
+    {
+        return $this->hasMany(UserEncryption::class);
+    }
 }

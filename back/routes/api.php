@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\EncryptionController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\ShoppingListController;
 use Illuminate\Support\Facades\Route;
@@ -21,4 +22,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('shopping-list', [ShoppingListController::class, 'show']);
     Route::put('shopping-list', [ShoppingListController::class, 'update']);
     Route::delete('shopping-list', [ShoppingListController::class, 'destroy']);
+
+    // The wrapped data keys, one per passkey. `PUT` is an upsert keyed on `credential_id`, so
+    // registering the same passkey twice replaces its row rather than adding one.
+    Route::get('encryption', [EncryptionController::class, 'index']);
+    Route::put('encryption', [EncryptionController::class, 'store']);
+    Route::delete('encryption', [EncryptionController::class, 'destroy']);
 });
