@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\ShoppingList;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -136,6 +137,28 @@ class ShoppingListEncryptedFlagTest extends TestCase
 
         $this->putJson('/api/shopping-list?list_id='.$list->id, ['encrypted' => 'yes please'])
             ->assertStatus(422);
+    }
+
+    /**
+     * The server stores what it was sent, byte for byte, and encrypts nothing itself.
+     *
+     * This is the tripwire for §5's standing rule against Laravel's `encrypted` cast. That cast
+     * uses `APP_KEY`, which lives on the same machine as the database, so adding it would put a
+     * key back beside the ciphertext and defeat the point — while looking like extra security.
+     * The trap is close at hand: this table has a column *named* `encrypted`, and `encrypted`
+     * is also the name of the cast type, so `'encrypted' => 'encrypted'` is one word away from
+     * `'encrypted' => 'boolean'`. Read through the query builder rather than Eloquent, because
+     * a cast would decrypt on the way out and hide itself from an Eloquent read.
+     */
+    public function test_the_server_stores_names_exactly_as_sent(): void
+    {
+        $this->actingUser();
+        $name = 'plain text, stored as plain text';
+
+        $this->postJson('/api/shopping-lists', ['name' => $name])->assertCreated();
+
+        $raw = DB::table('shopping_lists')->orderByDesc('id')->value('name');
+        $this->assertSame($name, $raw);
     }
 
     /**
