@@ -24,7 +24,10 @@ class ShoppingListController extends Controller
             ->withCount('items')
             ->orderBy('position')
             ->orderBy('id')
-            ->get(['id', 'name', 'position', 'created_at', 'version']);
+            // `encrypted` travels with every list everywhere it appears: a client reading the
+            // index has to know whether the name it just received is a name or ciphertext
+            // before it can put it on screen.
+            ->get(['id', 'name', 'position', 'created_at', 'version', 'encrypted']);
 
         return ApiResponse::success($lists);
     }
@@ -103,6 +106,13 @@ class ShoppingListController extends Controller
                 $list->update(['show_checkbox' => $data['show_checkbox']]);
             }
 
+            // Set in the same write as the ciphertext it describes, which is what makes a
+            // half-finished enable safe to resume: the flag and the content it applies to can
+            // never disagree, because one transaction carries both.
+            if (array_key_exists('encrypted', $data)) {
+                $list->update(['encrypted' => $data['encrypted']]);
+            }
+
             if (array_key_exists('items', $data)) {
                 $list->items()->delete();
                 foreach (array_values($data['items']) as $position => $item) {
@@ -158,6 +168,8 @@ class ShoppingListController extends Controller
             'name' => $list->name,
             'show_quantity' => $list->show_quantity ?? true,
             'show_checkbox' => $list->show_checkbox ?? true,
+            // Whether `name` and the item fields below are ciphertext.
+            'encrypted' => (bool) $list->encrypted,
             // The version the client edits against: it sends this back as `base_version`,
             // and a mismatch means another device got there first.
             'version' => (int) $list->version,
