@@ -17,6 +17,9 @@ export function makeServer() {
     // The raw request bodies, exactly as they went over the wire. `requests` records only
     // method and path; asserting that a plaintext name never left the device needs the bytes.
     sent: [],
+    // Writes still allowed before the connection dies; null means no limit. See
+    // `offlineAfterWrites`.
+    writesLeft: null,
   }
 
   server.seed = (name, items = [], { encrypted = false } = {}) => {
@@ -145,6 +148,16 @@ export function makeServer() {
     return ok(null, 404)
   }
 
+  /**
+   * Go offline after `n` more writes — a tunnel arriving partway through a multi-list job.
+   *
+   * Counted in writes rather than requests so a test can say "die after the second list" without
+   * having to know how many reads the pass makes on the way.
+   */
+  server.offlineAfterWrites = (n) => {
+    server.writesLeft = n
+  }
+
   server.install = () => {
     globalThis.fetch = async (url, init = {}) => {
       if (server.offline) {
@@ -154,6 +167,14 @@ export function makeServer() {
       const parsed = new URL(url, 'http://test.local')
       const path = parsed.pathname.replace(/^\/api\//, '')
       const method = init.method ?? 'GET'
+
+      if (server.writesLeft !== null && method !== 'GET') {
+        if (server.writesLeft === 0) {
+          server.offline = true
+          throw new TypeError('Failed to fetch')
+        }
+        server.writesLeft -= 1
+      }
       server.requests.push(`${method} ${path}${parsed.search}`)
       if (init.body !== undefined) server.sent.push({ method, path, raw: String(init.body) })
       return handle(
