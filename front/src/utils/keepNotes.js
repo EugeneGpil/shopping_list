@@ -11,9 +11,9 @@ import { readZipEntries } from './zipEntries'
  * The other judgement: **checked items are dropped**. In Keep a ticked item is something
  * already bought, so carrying them over would import a list of things not to buy.
  *
- * `back/app/Console/Commands/ImportKeepNotes.php` does the same job from the command line
- * and agrees on all of this by default — it can additionally be asked for the text notes
- * (`--text`) and the archived ones (`--archived`), which have no equivalent here.
+ * This is the only implementation of these rules. A second one existed as an artisan
+ * command for the first import and was removed once this replaced it — two parsers of the
+ * same file format drifted apart twice in a single afternoon.
  */
 
 const MAX_NAME = 255
