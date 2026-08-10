@@ -169,6 +169,11 @@ export default defineConfig((ctx) => {
           /^\/storage\//,
           /^\/sanctum\//,
         ]
+
+        // The manifest screenshots are for the install dialog, which the browser
+        // fetches itself before the app has been installed at all. Precaching them
+        // would download ~180KB on every first visit that nothing ever reads back.
+        cfg.globIgnores = [...(cfg.globIgnores || []), 'screenshots/**']
       },
     },
 

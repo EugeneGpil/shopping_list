@@ -55,5 +55,35 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/narrow-list.png",
+      "sizes": "412x915",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "A shopping list with quantities, three items already ticked off"
+    },
+    {
+      "src": "screenshots/narrow-lists.png",
+      "sizes": "412x915",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "The lists you keep, each with its item count"
+    },
+    {
+      "src": "screenshots/wide-list.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "A shopping list with quantities, three items already ticked off"
+    },
+    {
+      "src": "screenshots/wide-lists.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "The lists you keep, each with its item count"
+    }
   ]
 }

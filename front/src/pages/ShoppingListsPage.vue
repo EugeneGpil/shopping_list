@@ -62,6 +62,13 @@
       </span>
     </div>
 
+    <!-- Last of the three, and the only one that is not about the data: on iOS nothing offers
+         to install the app, so this page does. Shows on nothing but an iPhone or iPad that
+         has not installed it yet, and only until it is dismissed. It sits here rather than on
+         the login screen because installing is worth doing once the app has proved useful,
+         and here is where that happens. -->
+    <InstallHint />
+
     <!-- Only reachable with nothing cached to fall back on: with lists in the store they
          are shown instead, stale at worst. -->
     <div v-if="loadFailed && !store.visibleLists.length" class="text-center q-mt-xl">
@@ -141,6 +148,7 @@ import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
 import EncryptionDialog from 'src/components/EncryptionDialog.vue'
 import ImportFromKeepDialog from 'src/components/ImportFromKeepDialog.vue'
+import InstallHint from 'src/components/InstallHint.vue'
 import StaleDataNotice from 'src/components/StaleDataNotice.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
