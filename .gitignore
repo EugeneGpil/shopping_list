@@ -3,6 +3,14 @@
 # Deploy build byproduct (see .github/workflows/deploy.yml)
 build/
 
+# The TWA/Play build (docs/publish_todo.md B0). Only the config is versioned: the Android
+# project around it is generated from that file by `make android CMD=update`, so committing
+# it would be committing a build artefact. An allowlist rather than a list of things to skip,
+# because the one file that must never be committed — android.keystore, which is the identity
+# of the app on Play — would otherwise be one forgotten line away from being included.
+twa/*
+!twa/twa-manifest.json
+
 docker/volumes/postgres_data/**
 docker/volumes/php_home/**
 docker/volumes/node_home/**
