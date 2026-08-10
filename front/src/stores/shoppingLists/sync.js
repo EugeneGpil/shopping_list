@@ -45,7 +45,7 @@ export function createSync({ lists, orderDirty, forget }) {
    * Send one list: create it first if it only exists here, then PUT the whole document.
    *
    * Returns what happened rather than throwing, because every caller wants to carry on:
-   * 'saved' | 'conflict' | 'offline' | 'failed'.
+   * 'saved' | 'conflict' | 'offline' | 'failed' | 'locked'.
    */
   async function pushList(record) {
     // A tombstoned list has nothing worth sending; `pushDelete` owns it from here.
@@ -77,6 +77,9 @@ export function createSync({ lists, orderDirty, forget }) {
       record.dirty = false
       return 'saved'
     } catch (err) {
+      // Encrypted list, no key yet — `payloadOf` refused rather than write plaintext over
+      // it. The same shape as offline: the edit stays dirty and goes out after the unlock.
+      if (err.name === 'EncryptionLockedError') return 'locked'
       if (err.status === 409) {
         // The server sent the copy that won, so there is nothing more to ask it for.
         const winner = err.body?.data
@@ -145,7 +148,10 @@ export function createSync({ lists, orderDirty, forget }) {
         if ((await pushDelete(record)) === 'offline') return
       }
       for (const record of lists.value.filter((l) => l.dirty || !l.serverId)) {
-        if ((await pushList(record)) === 'offline') return
+        // 'locked' stops the pass for the same reason 'offline' does: every remaining
+        // encrypted list would refuse in exactly the same way, and the unlock is what
+        // starts it again.
+        if (['offline', 'locked'].includes(await pushList(record))) return
       }
       if (orderDirty.value) await pushOrder()
     } finally {

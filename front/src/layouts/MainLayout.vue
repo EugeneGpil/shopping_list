@@ -2,6 +2,7 @@
   <q-layout view="lHh Lpr lFf">
     <q-page-container>
       <SessionExpiredBanner />
+      <EncryptionGate />
       <router-view />
     </q-page-container>
   </q-layout>
@@ -9,14 +10,21 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, watch } from 'vue'
+import EncryptionGate from 'src/components/EncryptionGate.vue'
 import SessionExpiredBanner from 'src/components/SessionExpiredBanner.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
+import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 // Both pages live inside this layout, so the sync triggers belong here: whatever the user
 // is looking at, pending changes get their chance.
 const store = useShoppingListsStore()
+
+// Whether these lists are encrypted, asked once for the whole app. Not awaited by anything:
+// the pages read the plaintext cache and the server's ciphertext arrives later, so the only
+// thing waiting on this is the unlock dialog deciding whether to appear.
+onMounted(useEncryptionStore().load)
 
 // On launch, because a previous session may have been killed with changes still queued —
 // `sync()` is a no-op when there is nothing to send.

@@ -204,6 +204,28 @@ describe('the encryption seam', () => {
       await expect(locked.fetchLists()).rejects.toThrow(/encrypted/i)
     })
 
+    it('holds a pending edit back rather than writing plaintext over an encrypted list', async () => {
+      const store = useShoppingListsStore()
+      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
+      await store.sync()
+      const before = JSON.stringify(server.lists[0])
+
+      // The scenario with no UI to blame: an edit made offline is still `dirty` after a
+      // restart, and the first sync fires before the fingerprint prompt is answered.
+      const record = store.lists[0]
+      record.items[0].name = 'селёдка'
+      record.dirty = true
+      clearDek()
+
+      await store.sync()
+
+      // Sending it would leave plaintext under a list still flagged `encrypted` — unreadable
+      // on every other device, and on the server until a vacuum (§8). So: nothing written,
+      // the edit still pending, and it goes out after the unlock instead.
+      expect(JSON.stringify(server.lists[0])).toBe(before)
+      expect(record.dirty).toBe(true)
+    })
+
     it('still reads plaintext lists while locked', async () => {
       clearDek()
       server.seed('Groceries', [{ name: 'milk' }])

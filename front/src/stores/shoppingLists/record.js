@@ -1,4 +1,4 @@
-import { isUnlocked, openField, sealField } from './encryption'
+import { EncryptionLockedError, isUnlocked, openField, sealField } from './encryption'
 
 /**
  * The shape of a list record, and the two translations between it and the API.
@@ -156,6 +156,14 @@ export async function payloadOf(record) {
   }))
 
   if (!isUnlocked()) {
+    // A list the server holds encrypted must not be written back in the clear. This is
+    // reachable without any UI to blame: an edit made offline is still `dirty` after a
+    // restart, and the first sync fires before the fingerprint prompt is answered. Sending
+    // it would put plaintext under a list still flagged `encrypted` — unreadable on every
+    // other device, and undone on the server (§8) only by a vacuum. Refusing keeps the edit
+    // local until the key is back, which is what `pushList` does with this.
+    if (record.encrypted) throw new EncryptionLockedError()
+
     return {
       name: record.name,
       show_quantity: !!record.show_quantity,

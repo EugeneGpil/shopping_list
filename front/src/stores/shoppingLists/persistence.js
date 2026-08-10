@@ -19,6 +19,9 @@ export const SAVE_STATUS = {
 const OUTCOME_STATUS = {
   saved: SAVE_STATUS.saved,
   offline: SAVE_STATUS.offline,
+  // Encrypted, and the key is not back yet. The edit is kept exactly as an offline one is,
+  // and goes up after the unlock — so it gets the same words, which are already true.
+  locked: SAVE_STATUS.offline,
   failed: SAVE_STATUS.failed,
   conflict: SAVE_STATUS.conflict,
 }

@@ -27,6 +27,14 @@
               <q-item-section avatar><q-icon name="download" /></q-item-section>
               <q-item-section>Import from Google Keep</q-item-section>
             </q-item>
+            <q-item clickable @click="encrypting = true">
+              <q-item-section avatar>
+                <q-icon :name="encryption.enabled ? 'lock' : 'lock_open'" />
+              </q-item-section>
+              <q-item-section>
+                {{ encryption.enabled ? 'Encryption' : 'Encrypt my lists' }}
+              </q-item-section>
+            </q-item>
             <q-separator />
             <q-item clickable @click="onLogout">
               <q-item-section avatar><q-icon name="logout" /></q-item-section>
@@ -38,6 +46,7 @@
     </q-form>
 
     <ImportFromKeepDialog v-model="importing" />
+    <EncryptionDialog v-model="encrypting" />
 
     <q-inner-loading :showing="loading" />
 
@@ -121,19 +130,23 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
+import EncryptionDialog from 'src/components/EncryptionDialog.vue'
 import ImportFromKeepDialog from 'src/components/ImportFromKeepDialog.vue'
 import StaleDataNotice from 'src/components/StaleDataNotice.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
+import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
 const router = useRouter()
 const $q = useQuasar()
 const authStore = useAuthStore()
+const encryption = useEncryptionStore()
 const store = useShoppingListsStore()
 
 const newName = ref('')
 const importing = ref(false)
+const encrypting = ref(false)
 const loading = ref(false)
 const creating = ref(false)
 const loadFailed = ref(false)
@@ -144,6 +157,10 @@ async function load() {
   try {
     await store.fetchLists()
   } catch (err) {
+    // Encrypted, and this session has no key yet. Nothing is wrong and nothing is lost —
+    // the unlock dialog is already up, and it refetches once the key is back. Saying
+    // "can't load your lists" underneath it would be both alarming and untrue.
+    if (err.name === 'EncryptionLockedError') return
     // Offline with lists already in the store: keep showing them. They are the same
     // records the editor works on, so at worst they are a little stale — while an empty
     // page would suggest the lists are gone.
@@ -204,6 +221,9 @@ async function onLogout() {
   // The lists outlive this page, so they have to go explicitly — otherwise the next
   // person to sign in sees them until their own fetch lands.
   store.clear()
+  // And the same for the key: leaving it in memory would let the next account's ciphertext
+  // be "decrypted" with somebody else's DEK, which fails in the least obvious way possible.
+  encryption.reset()
   router.push('/login')
 }
 

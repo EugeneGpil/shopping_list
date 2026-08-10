@@ -136,6 +136,7 @@ import { useRowRefs } from 'src/composables/useRowRefs'
 import { useUndoRedoShortcuts } from 'src/composables/useUndoRedoShortcuts'
 import { useFlushOnHide } from 'src/composables/useFlushOnHide'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
+import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { isNetworkError } from 'src/api'
 
@@ -218,6 +219,14 @@ async function openList(id) {
   try {
     focusName(await store.open(id))
   } catch (err) {
+    // Encrypted, and the key is not here yet — a deep link opened on a cold start. Not a
+    // verdict on the list either: the unlock dialog is already up over this page, and the
+    // watcher below opens it again once the key arrives. Bouncing home would lose the link
+    // the user actually followed.
+    if (err.name === 'EncryptionLockedError') {
+      loadFailed.value = true
+      return
+    }
     // Two very different failures land here. A response — 404, or 403 for someone
     // else's list — is the server's final word, and bouncing home is right. A
     // transport failure is not a verdict on the list: offline it is simply
@@ -244,6 +253,16 @@ openList(route.params.id)
 // vue-router reuses this component for /list/1 -> /list/2, so onMounted does not
 // run again — without this, switching lists would keep showing the old one.
 watch(() => route.params.id, openList)
+
+// A deep link into an encrypted list, opened before the unlock: the fetch refused rather
+// than showing base64, so this is what opens it once the key is here. Nothing else would —
+// the gate refreshes the index, which says nothing about the list being looked at.
+watch(
+  () => useEncryptionStore().unlocked,
+  (unlocked) => {
+    if (unlocked && loadFailed.value) retry()
+  },
+)
 
 // Two cases, and only these two. A list we could not reach at all is worth opening again;
 // one that opened from cache and was never confirmed is worth asking about again, which is
