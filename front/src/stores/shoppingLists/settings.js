@@ -1,6 +1,7 @@
 /**
- * Per-list settings: the list name and the two column toggles. Saved immediately rather
- * than debounced — each is a deliberate single act, not a stream of keystrokes.
+ * Per-list settings: the list name, the two column toggles, and whether the list is
+ * encrypted. Saved immediately rather than debounced — each is a deliberate single act, not
+ * a stream of keystrokes.
  *
  * No network code of its own: it edits the record and calls the same `save()` the rows use,
  * so a toggle flipped offline sticks and syncs later like everything else. That is a change
@@ -48,9 +49,36 @@ export function createSettings({ current, save }) {
   const toggleQuantity = () => toggleColumn('show_quantity')
   const toggleCheckbox = () => toggleColumn('show_checkbox')
 
+  /**
+   * Encrypt this list, or stop encrypting it — the third per-list setting, and the one that
+   * rewrites the content rather than the chrome.
+   *
+   * Nothing special happens here, which is the whole point of keying the seam on the flag:
+   * flip it, save, and `payloadOf` sends the items sealed or in the clear to match, with the
+   * flag in the same request so the two cannot disagree.
+   *
+   * The caller must have a key in hand before turning this *on* — `payloadOf` refuses
+   * otherwise, and the editor asks for the fingerprint first. Turning it off needs no key
+   * beyond the one already used to read the rows that are about to be written back.
+   */
+  async function setEncrypted(value) {
+    const record = current.value
+    if (!record || !!record.encrypted === value) return
+    record.encrypted = value
+    await save()
+  }
+
   function reset() {
     nameSnapshot = ''
   }
 
-  return { setListName, beginNameEdit, saveName, toggleQuantity, toggleCheckbox, reset }
+  return {
+    setListName,
+    beginNameEdit,
+    saveName,
+    toggleQuantity,
+    toggleCheckbox,
+    setEncrypted,
+    reset,
+  }
 }

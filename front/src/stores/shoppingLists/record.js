@@ -52,22 +52,46 @@ export function seedTempIds(records) {
 }
 
 /**
- * One field as it arrives from the server, made readable.
+ * One item field as it arrives from the server, made readable.
  *
- * The per-list `encrypted` flag decides, not the presence of a key: a mixed collection is
- * normal mid-enable (§5), so every list is judged on its own flag. An empty or absent value
- * is passed through — there is nothing to decrypt and no blob to fail on.
+ * The list's own `encrypted` flag decides, not the presence of a key: encryption is per list
+ * (§1), so a collection where one list is encrypted and the rest are not is the normal state
+ * rather than a transitional one. An empty or absent value is passed through — there is
+ * nothing to decrypt and no blob to fail on.
  */
 const readField = (value, encrypted) =>
   encrypted && value ? openField(value) : Promise.resolve(value)
+
+/**
+ * A title left encrypted by the account-wide design that §1 replaced.
+ *
+ * That version sealed list names too, so any list locked before the change carries a
+ * ciphertext title the new code would render as base64. This opens it when the key is here,
+ * and reports that it did — the caller marks the record dirty, so the next save writes the
+ * title back in the clear and the list is permanently healed.
+ *
+ * Not a heuristic: a failed unwrap is GCM's authentication tag saying "these bytes were not
+ * written by this key", which is exactly what an ordinary plaintext title looks like. So the
+ * `catch` means "it was never encrypted", and that is the common case.
+ *
+ * **Deletable** once no list predates the change — one pass through every locked list on a
+ * device that holds the key is enough.
+ */
+async function healLegacyTitle(name, encrypted) {
+  if (!encrypted || !name || !isUnlocked()) return { name, healed: false }
+  try {
+    return { name: await openField(name), healed: true }
+  } catch {
+    return { name, healed: false }
+  }
+}
 
 /** A full record from `GET/POST/PUT shopping-list`, which always includes the items. */
 export async function recordFromApi(data) {
   const encrypted = !!data.encrypted
   const items = data.items ?? []
 
-  const [name, rows] = await Promise.all([
-    readField(data.name, encrypted),
+  const [rows, title] = await Promise.all([
     Promise.all(
       items.map(async (i) =>
         createRow({
@@ -77,34 +101,42 @@ export async function recordFromApi(data) {
         }),
       ),
     ),
+    healLegacyTitle(data.name, encrypted),
   ])
 
   return {
     id: data.id,
     serverId: data.id,
-    name,
+    // Never encrypted, on purpose (§1): the index has to render every title without a key,
+    // so the app opens and works with no prompt at all until an encrypted list is opened.
+    // The cost is that the server learns the *title* of a private list, never its contents.
+    name: title.name,
     show_quantity: data.show_quantity ?? true,
     show_checkbox: data.show_checkbox ?? true,
     items_count: items.length,
     items: rows,
     version: data.version ?? null,
-    // Carried so the record remembers what the server holds. `payloadOf` does not read it —
-    // whether the *next* write is encrypted depends on whether this device has a key, not on
-    // what the list used to be — but the index needs it to know how to read a name.
+    // What the server holds, and what the next write will do — `payloadOf` reads this. A list
+    // is encrypted because it was marked so, not because this device happens to hold a key.
     encrypted,
-    dirty: false,
+    // Normally false: a record straight from the server has nothing pending. True only for a
+    // legacy title just opened, which is a local change the server has not got yet.
+    dirty: title.healed,
     pendingDelete: false,
   }
 }
 
-/** What the index endpoint gives us: everything except the items. */
-export async function recordFromIndexEntry(entry) {
-  const encrypted = !!entry.encrypted
-
+/**
+ * What the index endpoint gives us: everything except the items.
+ *
+ * Never needs the key, and that is the point of the design: titles are plaintext, so the whole
+ * index renders on a locked device exactly as it does on an unlocked one.
+ */
+export function recordFromIndexEntry(entry) {
   return {
     id: entry.id,
     serverId: entry.id,
-    name: await readField(entry.name, encrypted),
+    name: entry.name,
     show_quantity: true,
     show_checkbox: true,
     items_count: entry.items_count,
@@ -112,7 +144,7 @@ export async function recordFromIndexEntry(entry) {
     // reason, and are replaced by the full read that happens when the list is opened.
     items: null,
     version: entry.version ?? null,
-    encrypted,
+    encrypted: !!entry.encrypted,
     dirty: false,
     pendingDelete: false,
   }
@@ -140,13 +172,15 @@ export function localRecord(name) {
  * replaces the full item set anyway, so there is nothing to gain from partial writes and
  * a lot to gain from having exactly one write path.
  *
- * Encrypts when this device holds a key, and says so with `encrypted: true` in the same
- * request as the ciphertext it describes — which is what makes an interrupted enable
- * resumable rather than ambiguous (§5).
+ * **The list decides, not the device.** `record.encrypted` is what this reads, so a device
+ * holding a key writes an ordinary list in the clear and a private one as ciphertext, in the
+ * same session and with no mode to be in. The flag rides along in the same request as the
+ * content it describes, so the two can never disagree (§5) — which is also what makes
+ * "encrypt this list" and "stop encrypting it" nothing more than flipping it and pushing.
  *
- * The decision is "do we have a key", not "was this list already encrypted". That is what
- * makes the enable pass in §6 nothing more than pushing every list: each one gets encrypted
- * and flagged on its way out, and a list created after setup is born encrypted.
+ * The flag is sent on every write rather than only when true: `sometimes` on the server means
+ * an absent flag leaves the old value alone, so turning encryption *off* for a list has to be
+ * stated explicitly or the row would stay marked encrypted with plaintext inside it.
  */
 export async function payloadOf(record) {
   const rows = (record.items ?? []).map((r) => ({
@@ -155,27 +189,25 @@ export async function payloadOf(record) {
     checked: !!r.checked,
   }))
 
-  if (!isUnlocked()) {
-    // A list the server holds encrypted must not be written back in the clear. This is
-    // reachable without any UI to blame: an edit made offline is still `dirty` after a
-    // restart, and the first sync fires before the fingerprint prompt is answered. Sending
-    // it would put plaintext under a list still flagged `encrypted` — unreadable on every
-    // other device, and undone on the server (§8) only by a vacuum. Refusing keeps the edit
-    // local until the key is back, which is what `pushList` does with this.
-    if (record.encrypted) throw new EncryptionLockedError()
-
-    return {
-      name: record.name,
-      show_quantity: !!record.show_quantity,
-      show_checkbox: !!record.show_checkbox,
-      items: rows,
-    }
-  }
-
-  return {
-    name: await sealField(record.name),
+  const payload = {
+    // Titles are never encrypted (§1) — see `recordFromApi`.
+    name: record.name,
     show_quantity: !!record.show_quantity,
     show_checkbox: !!record.show_checkbox,
+    encrypted: !!record.encrypted,
+  }
+
+  if (!record.encrypted) return { ...payload, items: rows }
+
+  // An encrypted list cannot be written without the key. Reachable with no UI at fault: an
+  // edit made offline is still `dirty` after a restart, and the first sync fires before any
+  // fingerprint prompt. Sending it would put plaintext under a row still flagged encrypted —
+  // unreadable on every other device, and left on the server until a vacuum (§8). Refusing
+  // keeps the edit local until the key is back, which is what `pushList` does with this.
+  if (!isUnlocked()) throw new EncryptionLockedError()
+
+  return {
+    ...payload,
     items: await Promise.all(
       rows.map(async (r) => ({
         name: await sealField(r.name),
@@ -185,7 +217,6 @@ export async function payloadOf(record) {
         checked: r.checked,
       })),
     ),
-    encrypted: true,
   }
 }
 

@@ -13,8 +13,10 @@ use Tests\TestCase;
  *
  * Two properties here are load-bearing rather than nice to have: **a credential registers
  * once** (two rows for one passkey would make "the last remaining row" meaningless), and **the
- * last row cannot be deleted** (doing so locks a user out of their own lists permanently, with
- * no server-side way back). Both are pinned below.
+ * last row cannot be deleted while a list is still encrypted** (doing so locks a user out of
+ * their own lists permanently, with no server-side way back). Both are pinned below, along with
+ * the other half of the second one — with nothing encrypted, that last row *can* go, because a
+ * key that opens nothing is not protecting anything.
  */
 class EncryptionKeyTest extends TestCase
 {
@@ -133,10 +135,11 @@ class EncryptionKeyTest extends TestCase
         $this->assertSame(['cred-b'], $user->encryptionKeys()->pluck('credential_id')->all());
     }
 
-    public function test_the_last_remaining_credential_cannot_be_removed(): void
+    public function test_the_last_credential_cannot_be_removed_while_a_list_is_encrypted(): void
     {
         $user = $this->actingUser();
         $this->putJson('/api/encryption', $this->payload('cred-a'))->assertCreated();
+        $user->shoppingLists()->create(['name' => 'Private', 'encrypted' => true]);
 
         $response = $this->deleteJson('/api/encryption?credential_id=cred-a');
 
@@ -144,6 +147,21 @@ class EncryptionKeyTest extends TestCase
         // The refusal has to actually keep the row — a 409 with the row gone would be worse
         // than no check at all, because the client would report a failure that did happen.
         $this->assertSame(1, $user->encryptionKeys()->count());
+    }
+
+    public function test_the_last_credential_can_be_removed_when_nothing_is_encrypted(): void
+    {
+        $user = $this->actingUser();
+        $this->putJson('/api/encryption', $this->payload('cred-a'))->assertCreated();
+        // Lists, but none of them locked — which is every account that set a key up and then
+        // never used it, or unlocked everything again.
+        $user->shoppingLists()->create(['name' => 'Groceries']);
+
+        $this->deleteJson('/api/encryption?credential_id=cred-a')->assertOk();
+
+        // A key that opens nothing protects nothing, and keeping it would mean an account can
+        // never get back to having no encryption at all.
+        $this->assertSame(0, $user->encryptionKeys()->count());
     }
 
     public function test_removing_a_credential_that_is_not_yours_is_not_found(): void

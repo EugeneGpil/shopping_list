@@ -18,6 +18,11 @@ const { useShoppingListsStore } = await import('src/stores/shoppingLists')
  * "what was sent" is the actual request body. That matters more here than anywhere else in the
  * suite: the whole claim of this feature is that plaintext does not leave the device, and the
  * only honest way to check it is to read the bytes that went over the wire.
+ *
+ * **Encryption is per list** (§1). Holding a key does not make this device encrypt anything —
+ * each list carries its own `encrypted` flag, and the seam reads that and nothing else. So
+ * nearly every test here works on two lists: one locked, one ordinary, in the same store and
+ * the same session.
  */
 describe('the encryption seam', () => {
   let server
@@ -35,73 +40,143 @@ describe('the encryption seam', () => {
     clearDek()
   })
 
-  /** Every request body sent so far, as one string to search for leaks. */
-  const everythingSent = () => server.sent.map((s) => s.raw).join('\n')
+  /**
+   * Request bodies as one string to search for leaks, optionally only those sent after a
+   * given point.
+   *
+   * The `from` argument exists because of §8: a list that was plaintext and is locked later
+   * was already sent in the clear, and no amount of encryption afterwards recalls it. So the
+   * honest claim is about everything written *from the lock onwards*, and that is what these
+   * tests measure. `sentSoFar()` marks the line.
+   */
+  const everythingSent = (from = 0, to = undefined) =>
+    server.sent
+      .slice(from, to)
+      .map((s) => s.raw)
+      .join('\n')
+
+  const sentSoFar = () => server.sent.length
 
   const bodyOf = (method, path) =>
     JSON.parse(server.sent.filter((s) => s.method === method && s.path === path).at(-1).raw)
 
+  /** Create a list on the server and open it. Plaintext, as every list starts out. */
+  async function openNew(title, items) {
+    const store = useShoppingListsStore()
+    store.importLists([{ title, items }])
+    await store.sync()
+    const record = store.lists.at(-1)
+    // By local id: a list created here keeps its `tmp-N` identity and only gains a `serverId`.
+    await store.open(record.id)
+
+    return { store, record }
+  }
+
+  /**
+   * The same, then locked — the whole of "encrypt this list" as the UI does it.
+   *
+   * `lockedAt` is where in `server.sent` the locking write begins, so a test can talk about
+   * what left the device after that and not before (see `everythingSent`).
+   */
+  async function openLocked(title, items) {
+    const opened = await openNew(title, items)
+    const lockedAt = sentSoFar()
+    await opened.store.setEncrypted(true)
+
+    return { ...opened, lockedAt }
+  }
+
   describe('pushing', () => {
-    it('sends ciphertext and never the plaintext', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка', 'селёдка'] }])
+    it('encrypts the items of a locked list, and sends no plaintext from then on', async () => {
+      const { store, lockedAt } = await openLocked('Секретный список', ['водка', 'селёдка'])
 
-      await store.sync()
+      store.beginEdit()
+      store.setName(0, 'самогон')
+      store.endEdit()
+      await store.flush()
 
-      const sent = everythingSent()
-      // The point of the whole feature, as one assertion per string the user typed.
-      for (const secret of ['Секретный список', 'водка', 'селёдка']) {
-        expect(sent).not.toContain(secret)
-      }
+      const sent = everythingSent(lockedAt)
+      for (const secret of ['водка', 'селёдка', 'самогон']) expect(sent).not.toContain(secret)
+
       const put = bodyOf('PUT', 'shopping-list')
       expect(put.encrypted).toBe(true)
-      expect(put.name).not.toBe('Секретный список')
-      expect(put.items.map((i) => i.name)).not.toContain('водка')
+      expect(put.items.map((i) => i.name)).not.toContain('самогон')
     })
 
-    it('encrypts the name on the create request too, not just the update', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
+    it('does not unsend what the server already had — locking is not retroactive (§8)', async () => {
+      const { lockedAt } = await openLocked('Секретный список', ['водка'])
 
-      await store.sync()
+      // Stated as a test because it is the one thing about per-list encryption that is easy to
+      // get wrong in one's head: locking a list protects it from here on. The copy that was
+      // already sent went in the clear, and on a real server it survives in the old row
+      // version until a vacuum, and in any backup taken before it.
+      expect(everythingSent(0, lockedAt)).toContain('водка')
+      // What it does do: the current stored value is ciphertext.
+      expect(server.lists[0].items[0].name).not.toBe('водка')
+    })
 
-      // A plaintext name sent here and corrected a moment later would still be on disk:
-      // Postgres keeps the old row version until it is vacuumed (§8).
-      const post = bodyOf('POST', 'shopping-lists')
-      expect(post.name).not.toBe('Секретный список')
-      expect(post.encrypted).toBe(true)
+    it('leaves the title in the clear, which is the deal (§1)', async () => {
+      await openLocked('Секретный список', ['водка'])
+
+      // Not an oversight: the index has to render every title with no key, so the app opens
+      // and works without a prompt. The server learns *that* there is a list called this, and
+      // nothing about what is in it.
+      expect(bodyOf('PUT', 'shopping-list').name).toBe('Секретный список')
+      expect(server.lists[0].name).toBe('Секретный список')
     })
 
     it('leaves a blank quantity as null rather than encrypting nothing', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Список', items: ['молоко'] }])
-
-      await store.sync()
+      await openLocked('Список', ['молоко'])
 
       expect(bodyOf('PUT', 'shopping-list').items[0].quantity).toBeNull()
     })
 
-    it('sends plaintext and no flag when this device has no key', async () => {
-      clearDek()
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Groceries', items: ['milk'] }])
+    it('sends an ordinary list in the clear, key or no key', async () => {
+      const { store } = await openNew('Groceries', ['milk'])
 
-      await store.sync()
+      store.beginEdit()
+      store.setName(0, 'milk and bread')
+      store.endEdit()
+      await store.flush()
 
+      // This is the whole point of keying the seam on the list: a device holding a key writes
+      // the shopping list in the clear and the private one sealed, in the same session.
       const put = bodyOf('PUT', 'shopping-list')
-      // Encryption being off has to look exactly like the app before any of this existed —
-      // including the absence of the flag, so an untouched list is not relabelled.
       expect(put.name).toBe('Groceries')
-      expect(put.encrypted).toBeUndefined()
+      expect(put.items[0].name).toBe('milk and bread')
+      expect(put.encrypted).toBe(false)
+    })
+
+    it('creates every list plaintext, whatever this device is holding', async () => {
+      const store = useShoppingListsStore()
+      await store.createList('Groceries')
+
+      // A new list cannot be the private one yet — nothing is in it. Encrypting on creation
+      // would put a fingerprint prompt in front of the most ordinary thing the app does.
+      const post = bodyOf('POST', 'shopping-lists')
+      expect(post.name).toBe('Groceries')
+      expect(post.encrypted).toBeUndefined()
+      expect(store.lists[0].encrypted).toBe(false)
+    })
+
+    it('states the flag when a list stops being encrypted, and writes it back readable', async () => {
+      const { store } = await openLocked('Секретный список', ['водка'])
+
+      await store.setEncrypted(false)
+
+      // `sometimes` on the server means an absent flag leaves the old value alone, so turning
+      // it off has to be said out loud or the row stays marked encrypted with plaintext in it.
+      const put = bodyOf('PUT', 'shopping-list')
+      expect(put.encrypted).toBe(false)
+      expect(put.items[0].name).toBe('водка')
+      expect(server.lists[0].encrypted).toBe(false)
     })
   })
 
   describe('reading back', () => {
-    it('restores what it sent, through the server', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка', 'селёдка'] }])
-      await store.sync()
-      const serverId = store.lists[0].serverId
+    it('restores the items through the server', async () => {
+      const { record } = await openLocked('Секретный список', ['водка', 'селёдка'])
+      const serverId = record.serverId
 
       // A second store on the same fake server: a different device, or this one after a
       // restart. Nothing of the first store's memory is reused.
@@ -110,82 +185,51 @@ describe('the encryption seam', () => {
       await fresh.fetchLists()
       await fresh.open(serverId)
 
-      expect(fresh.listName).toBe('Секретный список')
       expect(fresh.items.map((i) => i.name)).toEqual(['водка', 'селёдка'])
       // And the server really is holding ciphertext, not merely reporting a flag.
-      expect(server.lists[0].name).not.toBe('Секретный список')
+      expect(server.lists[0].items[0].name).not.toBe('водка')
     })
 
-    it('decrypts the index name, not only the full read', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
-      await store.sync()
+    it('reads the whole index with no key at all', async () => {
+      await openLocked('Секретный список', ['водка'])
+      await openNew('Groceries', ['milk'])
 
+      clearDek()
       setActivePinia(createPinia())
-      const fresh = useShoppingListsStore()
-      await fresh.fetchLists()
+      const locked = useShoppingListsStore()
+      await locked.fetchLists()
 
-      // The index page renders this name without ever opening the list.
-      expect(fresh.visibleLists[0].name).toBe('Секретный список')
+      // The property the whole design rests on: a locked device is a working app. Both titles,
+      // both counts, and which of them is private — none of it needs a fingerprint.
+      expect(locked.visibleLists.map((l) => l.name)).toEqual(['Секретный список', 'Groceries'])
+      expect(locked.visibleLists.map((l) => l.items_count)).toEqual([1, 1])
+      expect(locked.visibleLists.map((l) => l.encrypted)).toEqual([true, false])
     })
 
-    it('refreshes an already-known list from the index without garbling its name', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
-      await store.sync()
+    it('opens an ordinary list while locked', async () => {
+      const { record } = await openNew('Groceries', ['milk'])
+      const serverId = record.serverId
 
-      // Second read of the same list: this goes down `applyIndexEntry`, which is a different
-      // path from the first-sighting one above and decrypts separately.
+      clearDek()
+      setActivePinia(createPinia())
+      const locked = useShoppingListsStore()
+      await locked.fetchLists()
+      await locked.open(serverId)
+
+      // Nothing about holding no key should touch a list that was never encrypted — which is
+      // every list, until somebody says otherwise.
+      expect(locked.items.map((i) => i.name)).toEqual(['milk'])
+    })
+
+    it('refreshes a known list from the index without disturbing its flag', async () => {
+      const { store } = await openLocked('Секретный список', ['водка'])
+
+      // Second read of the same list: this goes down `applyIndexEntry`, a different path from
+      // the first-sighting one above.
       await store.fetchLists()
 
       expect(store.visibleLists[0].name).toBe('Секретный список')
-    })
-  })
-
-  describe('a collection that is only partly encrypted', () => {
-    it('reads each list according to its own flag', async () => {
-      // Exactly the state a half-finished enable leaves behind, and the reason the flag is
-      // per list rather than per user.
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Уже зашифровано', items: ['водка'] }])
-      await store.sync()
-      const encryptedId = store.lists[0].serverId
-
-      const plain = server.seed('Ещё не зашифровано', [{ name: 'молоко' }])
-
-      setActivePinia(createPinia())
-      const fresh = useShoppingListsStore()
-      await fresh.fetchLists()
-
-      expect(fresh.visibleLists.map((l) => l.name).sort()).toEqual(
-        ['Ещё не зашифровано', 'Уже зашифровано'].sort(),
-      )
-
-      await fresh.open(encryptedId)
-      expect(fresh.items.map((i) => i.name)).toEqual(['водка'])
-
-      await fresh.open(plain.id)
-      expect(fresh.items.map((i) => i.name)).toEqual(['молоко'])
-    })
-
-    it('encrypts a list that was still plaintext on its next push', async () => {
-      // The enable pass is nothing more than this: push every list, and the seam does the rest.
-      const plain = server.seed('Ещё не зашифровано', [{ name: 'молоко' }])
-      const store = useShoppingListsStore()
-      await store.fetchLists()
-      await store.open(plain.id)
-      // The sequence `ShoppingListRow` uses: focus, type, blur. `endEdit` is what commits the
-      // undo snapshot and schedules the save.
-      store.beginEdit()
-      store.setName(0, 'молоко и хлеб')
-      store.endEdit()
-      await store.flush()
-
-      expect(server.lists[0].encrypted).toBe(true)
-      expect(server.lists[0].name).not.toBe('Ещё не зашифровано')
-      expect(everythingSent()).not.toContain('молоко и хлеб')
-      // And the record now describes what the server holds, without waiting for a re-read.
-      expect(store.lists[0].encrypted).toBe(true)
+      expect(store.visibleLists[0].encrypted).toBe(true)
     })
   })
 
@@ -211,17 +255,14 @@ describe('the encryption seam', () => {
 
     const names = (store) => store.items.map((i) => i.name)
 
-    /** A list pushed as ciphertext and read back by a second device, which is the point. */
+    /** A locked list, read back by a second device — so every row here came from ciphertext. */
     async function readBack(title, items) {
-      const store = useShoppingListsStore()
-      store.importLists([{ title, items }])
-      await store.sync()
-      const serverId = store.lists[0].serverId
+      const { record } = await openLocked(title, items)
 
       setActivePinia(createPinia())
       const fresh = useShoppingListsStore()
       await fresh.fetchLists()
-      await fresh.open(serverId)
+      await fresh.open(record.serverId)
 
       return fresh
     }
@@ -278,6 +319,8 @@ describe('the encryption seam', () => {
 
     it('sends what the undo restored, encrypted, and nothing else', async () => {
       const store = await readBack('Секретный список', ['водка', 'селёдка'])
+      const serverId = store.lists[0].serverId
+      const before = sentSoFar()
       editRow(store, 0, 'вода')
       store.undo()
 
@@ -285,10 +328,9 @@ describe('the encryption seam', () => {
 
       // Restoring a value and saving it is a write like any other: encrypted on the way out,
       // and the restored text — not the edit that was undone — is what a third device reads.
-      expect(everythingSent()).not.toContain('водка')
+      expect(everythingSent(before)).not.toContain('водка')
       expect(bodyOf('PUT', 'shopping-list').encrypted).toBe(true)
 
-      const serverId = store.lists[0].serverId
       setActivePinia(createPinia())
       const third = useShoppingListsStore()
       await third.fetchLists()
@@ -297,30 +339,66 @@ describe('the encryption seam', () => {
     })
   })
 
+  describe('a list encrypted under the old account-wide design', () => {
+    it('opens its title and writes it back in the clear', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+      // Exactly what the previous design left behind: a locked list whose *title* is ciphertext
+      // too. Written straight into the fake server, since no code path produces it any more.
+      const { sealField } = await import('src/stores/shoppingLists/encryption')
+      server.lists[0].name = await sealField('Секретный список')
+
+      setActivePinia(createPinia())
+      const fresh = useShoppingListsStore()
+      await fresh.fetchLists()
+      await fresh.open(record.serverId)
+
+      // Readable again, and marked dirty so the next save heals it for every other device.
+      expect(fresh.listName).toBe('Секретный список')
+      expect(fresh.lists[0].dirty).toBe(true)
+
+      await fresh.sync()
+      expect(server.lists[0].name).toBe('Секретный список')
+      expect(server.lists[0].encrypted).toBe(true)
+      expect(store.lists[0].serverId).toBe(record.serverId)
+    })
+
+    it('leaves an ordinary plaintext title alone', async () => {
+      // The `catch` in `healLegacyTitle` must mean "this was never encrypted", not "something
+      // went wrong" — every locked list written since the change takes this path.
+      const { record } = await openLocked('Секретный список', ['водка'])
+
+      setActivePinia(createPinia())
+      const fresh = useShoppingListsStore()
+      await fresh.fetchLists()
+      await fresh.open(record.serverId)
+
+      expect(fresh.listName).toBe('Секретный список')
+      expect(fresh.lists[0].dirty).toBe(false)
+    })
+  })
+
   describe('locked', () => {
-    it('refuses to read an encrypted list rather than showing base64', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
-      await store.sync()
+    it('refuses to open an encrypted list rather than showing base64', async () => {
+      const { record } = await openLocked('Секретный список', ['водка'])
+      const serverId = record.serverId
 
       clearDek()
       setActivePinia(createPinia())
       const locked = useShoppingListsStore()
+      await locked.fetchLists()
 
       // Passing the ciphertext through would look like a rendering bug and then be saved back
-      // as a name on the next write — silent corruption dressed as a cosmetic problem.
-      await expect(locked.fetchLists()).rejects.toThrow(/encrypted/i)
+      // as an item name on the next write — silent corruption dressed as a cosmetic problem.
+      // The page turns this into a fingerprint prompt; it must not turn into rows.
+      await expect(locked.open(serverId)).rejects.toThrow(/encrypted/i)
     })
 
     it('holds a pending edit back rather than writing plaintext over an encrypted list', async () => {
-      const store = useShoppingListsStore()
-      store.importLists([{ title: 'Секретный список', items: ['водка'] }])
-      await store.sync()
+      const { store, record } = await openLocked('Секретный список', ['водка'])
       const before = JSON.stringify(server.lists[0])
 
       // The scenario with no UI to blame: an edit made offline is still `dirty` after a
       // restart, and the first sync fires before the fingerprint prompt is answered.
-      const record = store.lists[0]
       record.items[0].name = 'селёдка'
       record.dirty = true
       clearDek()
@@ -332,17 +410,6 @@ describe('the encryption seam', () => {
       // the edit still pending, and it goes out after the unlock instead.
       expect(JSON.stringify(server.lists[0])).toBe(before)
       expect(record.dirty).toBe(true)
-    })
-
-    it('still reads plaintext lists while locked', async () => {
-      clearDek()
-      server.seed('Groceries', [{ name: 'milk' }])
-      const store = useShoppingListsStore()
-
-      // Nothing about being locked should break a collection that was never encrypted — this
-      // is every existing user until they turn it on.
-      await store.fetchLists()
-      expect(store.visibleLists[0].name).toBe('Groceries')
     })
   })
 })

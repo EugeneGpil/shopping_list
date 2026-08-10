@@ -2,7 +2,6 @@
   <q-layout view="lHh Lpr lFf">
     <q-page-container>
       <SessionExpiredBanner />
-      <EncryptionGate />
       <router-view />
     </q-page-container>
   </q-layout>
@@ -10,7 +9,6 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, watch } from 'vue'
-import EncryptionGate from 'src/components/EncryptionGate.vue'
 import SessionExpiredBanner from 'src/components/SessionExpiredBanner.vue'
 import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
@@ -21,9 +19,9 @@ import { useShoppingListsStore } from 'src/stores/shoppingLists'
 // is looking at, pending changes get their chance.
 const store = useShoppingListsStore()
 
-// Whether these lists are encrypted, asked once for the whole app. Not awaited by anything:
-// the pages read the plaintext cache and the server's ciphertext arrives later, so the only
-// thing waiting on this is the unlock dialog deciding whether to appear.
+// Whether this account has an encryption key, asked once. Nothing waits on it: the index and
+// every unencrypted list work with no key at all, and it is only needed the moment a locked
+// list is opened — by which time it has long arrived.
 onMounted(useEncryptionStore().load)
 
 // On launch, because a previous session may have been killed with changes still queued —

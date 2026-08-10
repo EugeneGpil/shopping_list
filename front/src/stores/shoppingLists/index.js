@@ -3,7 +3,6 @@ import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api, isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
 import { createCollection } from './collection'
-import { createEncryptionPass } from './encryptionPass'
 import { createPersistence, SAVE_STATUS } from './persistence'
 import { createHistory } from './history'
 import { createRows } from './rows'
@@ -68,6 +67,8 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
   // Read-only facades over the open record, for rendering. Every write is an action.
   const items = computed(() => current.value?.items ?? [])
   const listName = computed(() => current.value?.name ?? '')
+  /** Whether the open list is one of the encrypted ones — what lights the lock in its header. */
+  const currentEncrypted = computed(() => !!current.value?.encrypted)
   const showQuantity = computed(() => current.value?.show_quantity ?? true)
   const showCheckbox = computed(() => current.value?.show_checkbox ?? true)
 
@@ -255,9 +256,6 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     pushOrder: sync.pushOrder,
   })
 
-  // Turning encryption on, once a key exists. Resumable by construction — see the module.
-  const encryptionPass = createEncryptionPass({ lists, pushList: sync.pushList })
-
   /**
    * The index read, with the staleness flag around it. Wrapped here rather than folded into
    * `collection.js` so that module keeps knowing only about the collection, and so the
@@ -402,6 +400,7 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     visibleLists,
     items,
     listName,
+    currentEncrypted,
     showQuantity,
     showCheckbox,
     numericTotal,
@@ -428,9 +427,6 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     reorderLists: collection.reorderLists,
     // sync
     sync: sync.sync,
-    // turning encryption on: safe to call again after it stops early
-    encryptAll: encryptionPass.encryptAll,
-    notYetEncrypted: encryptionPass.remaining,
     // history
     undo: history.undo,
     redo: history.redo,
@@ -444,6 +440,8 @@ export const useShoppingListsStore = defineStore('shoppingLists', () => {
     saveName: settings.saveName,
     toggleQuantity: settings.toggleQuantity,
     toggleCheckbox: settings.toggleCheckbox,
+    // Encrypting this one list, or stopping: a per-list setting like the two above.
+    setEncrypted: settings.setEncrypted,
     // rows
     setName: rows.setName,
     setQuantity: rows.setQuantity,

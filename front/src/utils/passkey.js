@@ -37,10 +37,22 @@ export class PrfUnsupportedError extends Error {
   }
 }
 
-/** The user dismissed the fingerprint prompt, or there was no usable credential. */
+/**
+ * The platform refused, and will not say why.
+ *
+ * WebAuthn deliberately collapses several outcomes into one `NotAllowedError` — the prompt was
+ * dismissed, it timed out, there was no credential this device could use, the origin was not
+ * allowed — because telling a page which one happened is itself a leak. So the message here
+ * covers the ground rather than guessing, and callers must **show it**: treating this as
+ * "the user changed their mind" and staying silent leaves a button that does nothing, which
+ * is exactly how it feels when it is really the second case.
+ */
 export class PasskeyCancelledError extends Error {
   constructor(cause) {
-    super('The passkey prompt was dismissed.')
+    super(
+      'No passkey was used — the prompt was dismissed, or this device has no passkey ' +
+        'registered for these lists.',
+    )
     this.name = 'PasskeyCancelledError'
     this.cause = cause
   }

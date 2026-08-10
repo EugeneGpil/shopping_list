@@ -11,8 +11,28 @@
       @retry="retry"
     />
 
+    <!-- Encrypted, and this session has no key yet. The editor is replaced rather than shown
+         empty for the same reason as above, and because the rows genuinely are not here: they
+         are on the server as ciphertext until a fingerprint says otherwise. -->
+    <ShoppingListLocked
+      v-else-if="locked"
+      :unlocking="encryption.busy"
+      :error="unlockError"
+      @back="router.push('/')"
+      @unlock="unlock"
+    />
+
     <template v-else>
-      <ShoppingListHeader :searching="searchOpen" @back="goBack" @toggle-search="toggleSearch" />
+      <ShoppingListHeader
+        :searching="searchOpen"
+        :encrypted="!!store.currentEncrypted"
+        :lock-busy="lockBusy"
+        @back="goBack"
+        @toggle-search="toggleSearch"
+        @toggle-lock="toggleLock"
+      />
+
+      <EncryptionDialog v-model="settingUpKey" />
 
       <!-- Search, folded away behind the header's icon until asked for. `v-if` rather than
            `v-show` so the row costs nothing while closed, which is the whole point. -->
@@ -126,8 +146,11 @@
 <script setup>
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useQuasar } from 'quasar'
 import draggable from 'vuedraggable'
+import EncryptionDialog from 'src/components/EncryptionDialog.vue'
 import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
+import ShoppingListLocked from 'src/components/ShoppingListLocked.vue'
 import ShoppingListRow from 'src/components/ShoppingListRow.vue'
 import ShoppingListSaveStatus from 'src/components/ShoppingListSaveStatus.vue'
 import ShoppingListUnavailable from 'src/components/ShoppingListUnavailable.vue'
@@ -140,15 +163,24 @@ import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { isNetworkError } from 'src/api'
 
+const $q = useQuasar()
 const route = useRoute()
 const router = useRouter()
 const store = useShoppingListsStore()
+const encryption = useEncryptionStore()
 
 const query = ref('')
 const searchOpen = ref(false)
 const searchInput = ref(null)
 const loadFailed = ref(false)
 const loading = ref(false)
+// The server holds this list encrypted and this session has no key: not a failure, a prompt
+// waiting to be answered. Kept separate from `loadFailed` because the two offer opposite
+// things — a retry button is useless here, and a fingerprint is useless there.
+const locked = ref(false)
+const unlockError = ref('')
+const lockBusy = ref(false)
+const settingUpKey = ref(false)
 
 const { setRowRef, focusName, focusQty, regrowNames } = useRowRefs()
 
@@ -215,16 +247,17 @@ async function goBack() {
 // decides is where a failure sends the user.
 async function openList(id) {
   loadFailed.value = false
+  locked.value = false
   loading.value = true
   try {
     focusName(await store.open(id))
   } catch (err) {
-    // Encrypted, and the key is not here yet — a deep link opened on a cold start. Not a
-    // verdict on the list either: the unlock dialog is already up over this page, and the
-    // watcher below opens it again once the key arrives. Bouncing home would lose the link
-    // the user actually followed.
+    // Encrypted, and the key is not here yet — which is the normal way to arrive at a locked
+    // list, since nothing asks for a fingerprint until one is opened. Not a failure and not a
+    // verdict: the panel offers the prompt, and the watcher below opens the list once it is
+    // answered. Bouncing home would lose the list the user asked for.
     if (err.name === 'EncryptionLockedError') {
-      loadFailed.value = true
+      locked.value = true
       return
     }
     // Two very different failures land here. A response — 404, or 403 for someone
@@ -254,15 +287,68 @@ openList(route.params.id)
 // run again — without this, switching lists would keep showing the old one.
 watch(() => route.params.id, openList)
 
-// A deep link into an encrypted list, opened before the unlock: the fetch refused rather
-// than showing base64, so this is what opens it once the key is here. Nothing else would —
-// the gate refreshes the index, which says nothing about the list being looked at.
+// The key arrived — from the panel below, or from another list unlocked earlier in the
+// session. Either way this is what turns a refused read into an open list; nothing else would.
 watch(
-  () => useEncryptionStore().unlocked,
+  () => encryption.unlocked,
   (unlocked) => {
-    if (unlocked && loadFailed.value) retry()
+    if (unlocked && locked.value) retry()
   },
 )
+
+// ---- the lock ----
+
+/**
+ * Answer the prompt.
+ *
+ * Every failure is shown, the dismissed prompt included: the platform reports "you cancelled"
+ * and "no passkey here can open this" identically (see `PasskeyCancelledError`), so silence
+ * would be indistinguishable from a broken button in the case where it matters most.
+ */
+async function unlock() {
+  unlockError.value = ''
+  try {
+    await encryption.unlock()
+  } catch (err) {
+    unlockError.value = err.message ?? 'Could not unlock.'
+  }
+}
+
+/**
+ * Encrypt this list, or stop.
+ *
+ * Three states to get through before the flag can move: no key for this account at all (send
+ * them to set one up), a key this session has not opened (ask for the fingerprint), and then
+ * the write itself. Turning encryption *off* needs no key beyond the one that decrypted the
+ * rows already on screen.
+ */
+async function toggleLock() {
+  const encrypting = !store.currentEncrypted
+
+  if (encrypting && !encryption.enabled) {
+    settingUpKey.value = true
+    return
+  }
+  if (encrypting && !encryption.unlocked) {
+    await unlock()
+    if (!encryption.unlocked) return
+  }
+
+  lockBusy.value = true
+  try {
+    await store.setEncrypted(encrypting)
+    $q.notify({
+      type: 'positive',
+      message: encrypting
+        ? 'This list is now encrypted. Only your passkeys can open it.'
+        : 'This list is no longer encrypted.',
+    })
+  } catch {
+    $q.notify({ type: 'negative', message: 'Could not change that.' })
+  } finally {
+    lockBusy.value = false
+  }
+}
 
 // Two cases, and only these two. A list we could not reach at all is worth opening again;
 // one that opened from cache and was never confirmed is worth asking about again, which is

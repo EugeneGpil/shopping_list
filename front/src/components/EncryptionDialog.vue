@@ -1,46 +1,32 @@
 <template>
-  <q-dialog v-model="open" @hide="onHide">
+  <q-dialog v-model="open" @hide="error = ''">
     <q-card style="max-width: 460px">
-      <!-- Not set up yet -->
+      <!-- No key yet -->
       <template v-if="!encryption.enabled">
         <q-card-section class="row items-center q-gutter-sm">
-          <q-icon name="lock" size="28px" color="primary" />
-          <div class="text-h6">Encrypt your lists</div>
+          <q-icon name="key" size="28px" color="primary" />
+          <div class="text-h6">Set up an encryption key</div>
         </q-card-section>
 
         <q-card-section class="q-pt-none text-body2">
           <p>
-            Your lists are encrypted on this device before they are sent. The server stores text it
-            cannot read, and neither can anyone with a copy of its database or its backups.
+            This creates a passkey — your fingerprint, face or screen lock — and a key that never
+            leaves your devices. Afterwards you can lock any single list, and its items are
+            encrypted here before they are sent. The server stores text it cannot read.
           </p>
+          <p>Nothing is locked by setting this up. Your lists stay exactly as they are.</p>
           <p class="text-weight-medium">
-            The key never leaves your devices. If you lose every passkey you have registered — and
-            the account they sync through — the lists are gone. Nobody can recover them, including
-            me.
-          </p>
-          <p>
-            This does not protect a phone somebody is holding unlocked: the copy kept on the device
-            stays readable so the app still works offline.
+            If you lose every passkey you register — and the account they sync through — the locked
+            lists are gone. Nobody can recover them, including me.
           </p>
           <p v-if="!platformAuthenticator" class="text-warning">
             This device has no built-in fingerprint or screen-lock authenticator, so you will need a
             security key.
           </p>
-          <p v-if="lists.pendingCount" class="text-warning">
-            {{ lists.pendingCount }} change(s) have not reached the server yet. They are sent first
-            — if that fails, turning encryption on now can cost another device's queued edits.
-          </p>
         </q-card-section>
 
         <q-card-section v-if="error" class="q-pt-none text-negative text-body2">
           {{ error }}
-        </q-card-section>
-
-        <q-card-section v-if="encryption.progress" class="q-pt-none">
-          <q-linear-progress :value="fraction" color="primary" class="q-mb-xs" />
-          <div class="text-caption">
-            {{ encryption.progress.done }} of {{ encryption.progress.total }} list(s) converted
-          </div>
         </q-card-section>
 
         <q-card-actions align="right">
@@ -50,25 +36,23 @@
             no-caps
             color="primary"
             icon="fingerprint"
-            label="Turn on encryption"
+            label="Create the key"
             :loading="encryption.busy"
-            @click="enable"
+            @click="create"
           />
         </q-card-actions>
       </template>
 
-      <!-- Already on -->
+      <!-- Key exists: the passkeys that can open it -->
       <template v-else>
         <q-card-section class="row items-center q-gutter-sm">
-          <q-icon name="lock" size="28px" color="positive" />
-          <div class="text-h6">Encryption is on</div>
+          <q-icon name="key" size="28px" color="positive" />
+          <div class="text-h6">Encryption key</div>
         </q-card-section>
 
-        <q-card-section v-if="encryption.needsSecondPasskey" class="q-pt-none text-body2">
-          <q-banner dense class="bg-orange-1 text-orange-10 rounded-borders">
-            One passkey opens these lists. Register a second one — on your laptop, or another phone
-            — while you still can: it is the only way back if this one is lost.
-          </q-banner>
+        <q-card-section class="q-pt-none text-body2 text-grey-7">
+          Any of these passkeys opens your locked lists. Lock a list from inside it, with the lock
+          button next to its title.
         </q-card-section>
 
         <q-card-section class="q-pt-none">
@@ -76,7 +60,7 @@
             <q-item v-for="key in encryption.keys" :key="key.credential_id">
               <q-item-section avatar><q-icon name="key" color="grey-7" /></q-item-section>
               <q-item-section>
-                <q-item-label>{{ key.label || 'Passkey' }}</q-item-label>
+                <q-item-label>Passkey</q-item-label>
                 <q-item-label caption>Added {{ addedOn(key) }}</q-item-label>
               </q-item-section>
               <q-item-section side>
@@ -87,16 +71,12 @@
                   size="sm"
                   icon="delete"
                   color="negative"
-                  :disable="encryption.keys.length < 2 || encryption.busy"
+                  :disable="encryption.busy"
                   @click="remove(key)"
                 />
               </q-item-section>
             </q-item>
           </q-list>
-        </q-card-section>
-
-        <q-card-section v-if="unconverted" class="q-pt-none text-body2 text-warning">
-          {{ unconverted }} list(s) are still stored as plain text — the last pass stopped early.
         </q-card-section>
 
         <q-card-section v-if="error" class="q-pt-none text-negative text-body2">
@@ -105,15 +85,6 @@
 
         <q-card-actions align="right">
           <q-btn flat no-caps label="Close" v-close-popup :disable="encryption.busy" />
-          <q-btn
-            v-if="unconverted"
-            flat
-            no-caps
-            color="primary"
-            label="Finish converting"
-            :loading="encryption.busy"
-            @click="resume"
-          />
           <q-btn
             unelevated
             no-caps
@@ -137,15 +108,15 @@ import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { hasPlatformAuthenticator } from 'src/utils/passkey'
 
 /**
- * Setting encryption up, and everything about it afterwards (§6).
+ * The key and its passkeys (§6) — reached from the ⋮ menu on the index.
  *
- * One dialog for both states because they are the same subject and the answer to "is it on?"
- * is what the user came here for. The warnings on the left-hand branch are §0 and §10 stated
- * in the words the doc asks for: no recovery, and the device cache stays readable.
+ * It creates and manages the key and nothing else. Which lists are encrypted is decided one
+ * list at a time, in the list itself, which is why there is no "encrypt everything" button
+ * here and no progress to report.
  *
- * Turning encryption *off* is deliberately absent — §1 decided it must be possible, but the
- * flow (fresh unlock, decrypt everything, drop every wrapped key) is not built yet, and a
- * button that half-works here would be a way to lose data rather than a way out.
+ * Removing the key altogether is deliberately absent: with per-list encryption the way out is
+ * to unlock the lists that are locked, one at a time, and the last remaining passkey is
+ * refused by the server precisely so that stays possible.
  */
 
 const props = defineProps({ modelValue: Boolean })
@@ -163,90 +134,114 @@ const open = computed({
   set: (value) => emit('update:modelValue', value),
 })
 
-const fraction = computed(() => {
-  const { done, total } = encryption.progress ?? {}
-  return total ? done / total : 0
-})
-
-/** Lists the server still holds in the clear — what a resumed pass has left to do. */
-const unconverted = computed(() => (encryption.enabled ? lists.notYetEncrypted().length : 0))
+/**
+ * Locked lists, and whether this key is the only way into them.
+ *
+ * The server enforces the same rule and is the one that matters; this is only here so the
+ * button says what it will do before it is pressed. With nothing locked, the last passkey is
+ * removable — a key that opens nothing is not protecting anything.
+ */
+const lockedCount = computed(() => lists.visibleLists.filter((l) => l.encrypted).length)
+const lastOne = computed(() => encryption.keys.length < 2 && lockedCount.value > 0)
 
 const addedOn = (key) =>
   key.created_at ? new Date(key.created_at).toLocaleDateString() : 'this device'
-
-const deviceLabel = () => {
-  const ua = navigator.userAgent
-  const platform = /Android/.test(ua)
-    ? 'Android'
-    : /iPhone|iPad/.test(ua)
-      ? 'iOS'
-      : /Windows/.test(ua)
-        ? 'Windows'
-        : /Mac OS X/.test(ua)
-          ? 'Mac'
-          : 'Linux'
-  const browser = /Edg\//.test(ua)
-    ? 'Edge'
-    : /Chrome\//.test(ua)
-      ? 'Chrome'
-      : /Safari\//.test(ua)
-        ? 'Safari'
-        : 'Browser'
-
-  return `${browser} on ${platform}`
-}
 
 onMounted(async () => {
   platformAuthenticator.value = await hasPlatformAuthenticator()
 })
 
-/** Every action here ends the same way: the prompt was dismissed, or something to say. */
+/**
+ * Every action here ends the same way: something to say, and it is always said.
+ *
+ * Including the cancelled-prompt case, which used to be swallowed as "they changed their mind".
+ * The platform cannot tell that apart from "this device has no usable passkey" (see
+ * `PasskeyCancelledError`), so staying quiet turned a real failure into a button that visibly
+ * does nothing.
+ */
 function report(err, fallback) {
-  if (err.name === 'PasskeyCancelledError') return
   error.value = err.message ?? fallback
 }
 
-async function enable() {
+async function create() {
   error.value = ''
   try {
-    const { total, done, stopped } = await encryption.enable(deviceLabel())
-    if (stopped) {
-      error.value =
-        `Converted ${done} of ${total} list(s), then stopped: ` +
-        `${stopped === 'offline' ? 'no connection' : stopped}. ` +
-        'Your key is saved — open this dialog again to finish.'
-      return
-    }
-    $q.notify({ type: 'positive', message: `Encrypted ${done} list(s).` })
+    await encryption.createKey()
+    $q.notify({
+      type: 'positive',
+      message: 'Key created. Open a list and press the lock to encrypt it.',
+    })
   } catch (err) {
-    report(err, 'Could not turn encryption on.')
+    report(err, 'Could not create the key.')
   }
 }
 
-async function resume() {
-  error.value = ''
-  try {
-    const { total, done, stopped } = await encryption.runPass()
-    if (stopped) error.value = `Converted ${done} of ${total} list(s), then stopped: ${stopped}.`
-  } catch (err) {
-    report(err, 'Could not finish converting.')
-  }
-}
-
+/**
+ * Add a second passkey, unlocking first if this session is not holding the key.
+ *
+ * The unlock is not optional and cannot be skipped: the new passkey has to wrap *the same* data
+ * key, so it has to be in hand. Nothing unlocks at boot any more (§1), so on most visits this is
+ * two prompts in a row — one to open the key, one to create the credential. Doing it here rather
+ * than telling the user to go and open a locked list first is the difference between a working
+ * button and the dead end this was.
+ */
 async function addPasskey() {
   error.value = ''
   try {
-    await encryption.addPasskey(deviceLabel())
+    if (!encryption.unlocked) await encryption.unlock()
+    await encryption.addPasskey()
     $q.notify({ type: 'positive', message: 'Passkey added.' })
   } catch (err) {
     report(err, 'Could not add that passkey.')
   }
 }
 
+/**
+ * What removing this passkey actually costs, which is three different things.
+ *
+ * Worth the branch: the button is reachable in all three situations, and one sentence covering
+ * them all ends up describing locked lists to someone who has none — true of nothing, and
+ * alarming for no reason.
+ *
+ * No device name in any of them, because the app has none worth quoting — see `createKey`.
+ */
+function removalWarning() {
+  if (encryption.keys.length < 2) {
+    return (
+      'This is the only passkey, so removing it leaves the account with no encryption key. ' +
+      'Nothing is locked, so nothing becomes unreadable — but setting encryption up again ' +
+      'later creates a different key.'
+    )
+  }
+  if (lockedCount.value) {
+    return (
+      `This passkey will no longer open your ${lockedCount.value} locked list(s). Your other ` +
+      'passkeys still will, and the lists themselves are untouched.'
+    )
+  }
+
+  return 'This passkey will no longer be usable for lists you lock later. Your other passkeys will.'
+}
+
 function remove(key) {
+  // Answered on the tap rather than by grey-ing the button out: a disabled control explains
+  // nothing, and this is the one refusal in the app that a user is entitled to a reason for.
+  if (lastOne.value) {
+    $q.dialog({
+      title: 'This passkey cannot be removed',
+      message:
+        `It is the only one that can open your ${lockedCount.value} locked list(s), and ` +
+        'removing it would leave them unopenable for good. Add a second passkey, or unlock ' +
+        'those lists first.',
+      ok: { label: 'OK', flat: true, noCaps: true },
+    })
+
+    return
+  }
+
   $q.dialog({
     title: 'Remove passkey',
-    message: `"${key.label || 'This passkey'}" will no longer open your lists. The lists themselves are untouched.`,
+    message: removalWarning(),
     cancel: true,
     ok: { label: 'Remove', color: 'negative' },
   }).onOk(async () => {
@@ -258,10 +253,5 @@ function remove(key) {
       error.value = err.body?.message ?? 'Could not remove that passkey.'
     }
   })
-}
-
-function onHide() {
-  error.value = ''
-  encryption.progress = null
 }
 </script>

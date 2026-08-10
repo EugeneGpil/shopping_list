@@ -28,11 +28,9 @@
               <q-item-section>Import from Google Keep</q-item-section>
             </q-item>
             <q-item clickable @click="encrypting = true">
-              <q-item-section avatar>
-                <q-icon :name="encryption.enabled ? 'lock' : 'lock_open'" />
-              </q-item-section>
+              <q-item-section avatar><q-icon name="key" /></q-item-section>
               <q-item-section>
-                {{ encryption.enabled ? 'Encryption' : 'Encrypt my lists' }}
+                {{ encryption.enabled ? 'Encryption key' : 'Set up encryption' }}
               </q-item-section>
             </q-item>
             <q-separator />
@@ -102,7 +100,18 @@
             <q-icon name="drag_indicator" class="drag-handle" color="grey-6" @click.stop />
           </q-item-section>
           <q-item-section>
-            <q-item-label>{{ list.name }}</q-item-label>
+            <q-item-label>
+              {{ list.name }}
+              <!-- Titles stay readable whatever a list's flag says (§1), so this is the only
+                   thing that tells the two kinds apart on the index. -->
+              <q-icon
+                v-if="list.encrypted"
+                name="lock"
+                size="14px"
+                color="grey-7"
+                class="q-ml-xs"
+              />
+            </q-item-label>
             <q-item-label caption>{{ list.items_count }} item(s)</q-item-label>
           </q-item-section>
           <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none">
@@ -157,10 +166,10 @@ async function load() {
   try {
     await store.fetchLists()
   } catch (err) {
-    // Encrypted, and this session has no key yet. Nothing is wrong and nothing is lost —
-    // the unlock dialog is already up, and it refetches once the key is back. Saying
-    // "can't load your lists" underneath it would be both alarming and untrue.
-    if (err.name === 'EncryptionLockedError') return
+    // No encryption case to handle here, and that is the design rather than an omission: the
+    // index is titles and counts, both plaintext however a list is stored (§1), so this page
+    // never needs a key and never has to explain itself.
+    //
     // Offline with lists already in the store: keep showing them. They are the same
     // records the editor works on, so at worst they are a little stale — while an empty
     // page would suggest the lists are gone.

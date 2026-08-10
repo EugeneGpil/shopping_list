@@ -66,10 +66,16 @@ class EncryptionController extends Controller
     /**
      * Forget a credential — the "remove a lost device" path.
      *
-     * The last remaining row is refused. Deleting it would not lose the lists but would lock
-     * them away with no way back, since the server holds no other copy of the key and cannot
-     * be made to produce one. Turning encryption off is the supported way out of that (§6),
-     * and it needs a working credential to do the decrypting — so this has to stay in the way.
+     * The last remaining row is refused **while any list is still encrypted**. Deleting it then
+     * would not lose the lists but would lock them away with no way back, since the server holds
+     * no other copy of the key and cannot be made to produce one.
+     *
+     * With nothing encrypted there is nothing to lock away, so it is allowed: encryption is per
+     * list (`docs/go_encrypted.md` §1), and a key that opens none of them is protecting nothing.
+     * Refusing there would leave an account permanently carrying a passkey it has no use for.
+     *
+     * This is the one thing about the content the server can honestly check — `encrypted` is its
+     * own boolean column, not something it has to read the ciphertext to know.
      */
     public function destroy(DestroyEncryptionKeyRequest $request): JsonResponse
     {
@@ -82,10 +88,12 @@ class EncryptionController extends Controller
             ->where('credential_id', $request->validated('credential_id'))
             ->firstOrFail();
 
-        if ($user->encryptionKeys()->count() <= 1) {
+        $isLast = $user->encryptionKeys()->count() <= 1;
+
+        if ($isLast && $user->shoppingLists()->where('encrypted', true)->exists()) {
             return ApiResponse::error(
-                'This is the only passkey that can open your lists. '
-                .'Register another one first, or turn encryption off.',
+                'This is the only passkey that can open your encrypted lists. '
+                .'Register another one first, or unlock those lists.',
                 409,
             );
         }

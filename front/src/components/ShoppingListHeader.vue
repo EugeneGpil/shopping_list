@@ -56,6 +56,20 @@
       >
         <q-tooltip>{{ store.showQuantity ? 'Hide quantity' : 'Show quantity' }}</q-tooltip>
       </q-btn>
+      <!-- Encryption, as a per-list switch rather than an account-wide mode (§1). Lit when
+           this list is locked, and it is the only place the choice is made. -->
+      <q-btn
+        flat
+        round
+        dense
+        :icon="encrypted ? 'lock' : 'lock_open'"
+        class="header-btn"
+        :color="encrypted ? 'primary' : 'grey'"
+        :loading="lockBusy"
+        @click="emit('toggle-lock')"
+      >
+        <q-tooltip>{{ encrypted ? 'Stop encrypting this list' : 'Encrypt this list' }}</q-tooltip>
+      </q-btn>
       <q-btn
         flat
         round
@@ -90,11 +104,16 @@ defineProps({
   // Whether the page currently has the search field open. Only lights the button — the
   // field, the text in it and the filtering all belong to the page.
   searching: { type: Boolean, default: false },
+  // Whether this list is encrypted, and whether that is being changed right now. Passed in
+  // rather than read from the store: the page owns the flow behind it, which can involve a
+  // fingerprint prompt and a key that does not exist yet.
+  encrypted: { type: Boolean, default: false },
+  lockBusy: { type: Boolean, default: false },
 })
 
 // Navigation stays with the page — it owns the router and the flush-before-leave — and so
-// does the search field, so both of these are the page's to act on.
-const emit = defineEmits(['back', 'toggle-search'])
+// do the search field and the lock, so all three of these are the page's to act on.
+const emit = defineEmits(['back', 'toggle-search', 'toggle-lock'])
 
 const store = useShoppingListsStore()
 
