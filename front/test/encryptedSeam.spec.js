@@ -189,6 +189,114 @@ describe('the encryption seam', () => {
     })
   })
 
+  /**
+   * The features §4 promises are untouched: everything above the seam works on plaintext in
+   * memory, so nothing about them should change when the strings arrive as ciphertext.
+   *
+   * They are tested here rather than trusted because they are exactly the ones that would break
+   * quietly — a total that stops appearing, an undo that restores base64 — and because each one
+   * reads `items` a beat after the seam has written them, which is where a regression would land.
+   *
+   * Search is the fourth of that family and is not here: it lives in `ShoppingListPage.vue` as a
+   * predicate over these same `items`, and there is no component harness in this suite. It was
+   * checked in the browser instead — see §9.
+   */
+  describe('above the seam', () => {
+    /** Type into a row as `ShoppingListRow` does: focus, input, then the `change` on blur. */
+    function editRow(store, index, value) {
+      store.beginEdit()
+      store.setName(index, value)
+      store.endEdit()
+    }
+
+    const names = (store) => store.items.map((i) => i.name)
+
+    /** A list pushed as ciphertext and read back by a second device, which is the point. */
+    async function readBack(title, items) {
+      const store = useShoppingListsStore()
+      store.importLists([{ title, items }])
+      await store.sync()
+      const serverId = store.lists[0].serverId
+
+      setActivePinia(createPinia())
+      const fresh = useShoppingListsStore()
+      await fresh.fetchLists()
+      await fresh.open(serverId)
+
+      return fresh
+    }
+
+    /**
+     * The same, as a tally: a list of numbers is one with no quantity column — half of what
+     * `numericTotal` requires. Asked rather than toggled blindly, because an imported list
+     * already arrives without that column.
+     */
+    async function readBackTally(numbers) {
+      const store = await readBack('Счёт', numbers)
+      if (store.showQuantity) await store.toggleQuantity()
+
+      return store
+    }
+
+    it('totals rows that arrived as ciphertext', async () => {
+      const store = await readBackTally(['400_000', '600_000', ''])
+
+      expect(server.lists[0].items[0].name).not.toBe('400_000')
+      expect(store.numericTotal).toBe(1000000)
+    })
+
+    it('follows an edit to an encrypted list, and stops when it should', async () => {
+      const store = await readBackTally(['10', '5'])
+
+      editRow(store, 1, '6')
+      expect(store.numericTotal).toBe(16)
+      editRow(store, 1, 'шесть')
+      expect(store.numericTotal).toBeNull()
+    })
+
+    it('squashes an encrypted tally and takes it back in one step', async () => {
+      const store = await readBackTally(['400_000', '600_000'])
+
+      store.squashRows()
+      expect(names(store)).toEqual(['1_000_000'])
+      store.undo()
+      expect(names(store)).toEqual(['400_000', '600_000'])
+    })
+
+    it('undoes and redoes an edit on an encrypted list', async () => {
+      const store = await readBack('Секретный список', ['водка', 'селёдка'])
+
+      editRow(store, 0, 'вода')
+      expect(names(store)).toEqual(['вода', 'селёдка'])
+      store.undo()
+      // The undo stack holds plaintext, because the seam is below it. A record of ciphertext
+      // here would put base64 on screen — and then save it as an item name.
+      expect(names(store)).toEqual(['водка', 'селёдка'])
+      store.redo()
+      expect(names(store)).toEqual(['вода', 'селёдка'])
+    })
+
+    it('sends what the undo restored, encrypted, and nothing else', async () => {
+      const store = await readBack('Секретный список', ['водка', 'селёдка'])
+      editRow(store, 0, 'вода')
+      store.undo()
+
+      await store.flush()
+
+      // Restoring a value and saving it is a write like any other: encrypted on the way out,
+      // and the restored text — not the edit that was undone — is what a third device reads.
+      expect(everythingSent()).not.toContain('водка')
+      expect(bodyOf('PUT', 'shopping-list').encrypted).toBe(true)
+
+      const serverId = store.lists[0].serverId
+      setActivePinia(createPinia())
+      const third = useShoppingListsStore()
+      await third.fetchLists()
+      await third.open(serverId)
+      expect(names(third)).toEqual(['водка', 'селёдка'])
+    })
+  })
+
   describe('locked', () => {
     it('refuses to read an encrypted list rather than showing base64', async () => {
       const store = useShoppingListsStore()
