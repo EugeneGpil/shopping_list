@@ -115,6 +115,12 @@ jobs:
       - name: Fail if the Digital Asset Links file is missing
         run: test -f front/dist/pwa/.well-known/assetlinks.json
 
+      # Google Play fetches this URL and rejects the listing if it 404s. It is excluded from
+      # the Workbox precache and from the SPA navigation fallback, so nothing else in the app
+      # would notice it going missing.
+      - name: Fail if the privacy policy is missing
+        run: test -f front/dist/pwa/privacy.html
+
       # --- artifact ------------------------------------------------------
 
       - name: Assemble release artifact

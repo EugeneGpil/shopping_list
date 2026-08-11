@@ -11,7 +11,7 @@
   "navigationDividerColor": "#000000",
   "navigationDividerColorDark": "#000000",
   "backgroundColor": "#FFFFFF",
-  "enableNotifications": true,
+  "enableNotifications": false,
   "startUrl": "/",
   "iconUrl": "https://shopping-list.evgenii-efimov.ru/icons/icon-512x512.png",
   "maskableIconUrl": "https://shopping-list.evgenii-efimov.ru/icons/icon-maskable-512x512.png",

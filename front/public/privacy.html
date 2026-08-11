@@ -1,0 +1,238 @@
+<!doctype html>
+<!--
+  The privacy policy for the Shopping List app (package ru.evgenii_efimov.shopping_list).
+
+  Deliberately a plain static file rather than a route in the SPA: Google Play checks this URL
+  from a crawler, and the app store listing is rejected if it 404s, redirects to a login, or
+  renders empty without JavaScript. A file in public/ is served by nginx directly and needs
+  none of the app to work.
+
+  It is excluded from the Workbox precache and from the service worker's navigation fallback
+  (see front/quasar.config.js) — without the second one the SPA's index.html would be served
+  in its place to anyone who has the app installed.
+
+  Anything asserted here has to stay true of the code. The two claims most likely to rot:
+  the list of fields taken from the Google account (back/app/Http/Controllers/Api/
+  AuthController.php) and what encryption does and does not cover (docs/go_encrypted.md §0).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — Shopping List</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1d1d1f;
+        --muted: #5f6368;
+        --rule: #e0e0e0;
+        --accent: #1976d2;
+        --card: #f5f7fa;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121212;
+          --fg: #e8eaed;
+          --muted: #9aa0a6;
+          --rule: #2c2c2e;
+          --accent: #64b5f6;
+          --card: #1c1c1e;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 20px 72px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+          sans-serif;
+      }
+      main {
+        max-width: 44rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.9rem;
+        line-height: 1.2;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin: 40px 0 8px;
+        padding-top: 16px;
+        border-top: 1px solid var(--rule);
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 8px;
+      }
+      ul {
+        padding-left: 1.25rem;
+      }
+      li {
+        margin: 6px 0;
+      }
+      a {
+        color: var(--accent);
+      }
+      .card {
+        background: var(--card);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 16px 0;
+      }
+      .card p:first-child {
+        margin-top: 0;
+      }
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+      footer {
+        margin-top: 48px;
+        padding-top: 16px;
+        border-top: 1px solid var(--rule);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy Policy</h1>
+      <p class="sub">
+        Shopping List — web app at
+        <a href="https://shopping-list.evgenii-efimov.ru">shopping-list.evgenii-efimov.ru</a> and
+        Android app <code>ru.evgenii_efimov.shopping_list</code>.
+      </p>
+      <p class="sub">Last updated: 11 August 2026.</p>
+
+      <p>
+        Shopping List is made and run by one person, Evgenii Efimov, as a personal project. It has
+        no advertising, no analytics, no tracking and no third-party SDKs beyond the Google sign-in
+        described below. Nothing collected here is sold, rented or shared with anyone for their own
+        purposes.
+      </p>
+
+      <h2>What is collected</h2>
+      <p><strong>From your Google account, when you sign in:</strong></p>
+      <ul>
+        <li>your email address;</li>
+        <li>your display name;</li>
+        <li>the URL of your Google profile picture;</li>
+        <li>
+          the account identifier Google issues for you in this app (a Firebase user id). It is not
+          your Google password — the app never sees that.
+        </li>
+      </ul>
+      <p><strong>What you put into the app:</strong></p>
+      <ul>
+        <li>the titles of your lists;</li>
+        <li>the items on them, their quantities, and which ones are ticked off;</li>
+        <li>the order of lists and items, and when each was created and last changed.</li>
+      </ul>
+      <p>
+        There is no other collection: no location, no contacts, no photos, no device identifiers, no
+        usage analytics, no crash reporting.
+      </p>
+
+      <h2>Why</h2>
+      <p>
+        Solely to run the app: to sign you in, to keep your lists attached to your account, and to
+        show them back to you on every device you sign in from. There is no other use — no
+        profiling, no advertising, no recommendations, no training of anything.
+      </p>
+
+      <h2>Encryption of list contents</h2>
+      <p>
+        Any list can be locked. Locking one encrypts the item names and quantities on that list in
+        your browser, with a key that is unwrapped by a passkey on your device. The server stores
+        those items only as ciphertext and holds no copy of the key, so their contents cannot be
+        read from the server, its backups or its database.
+      </p>
+      <div class="card">
+        <p><strong>What locking does not cover, stated plainly:</strong></p>
+        <p>
+          List <em>titles</em> stay unencrypted, including the titles of locked lists, as does the
+          fact that a list is locked, how many items it holds, their order and their timestamps. So
+          the secret must be in the items, not in the name of the list.
+        </p>
+        <p>
+          A copy of your lists is also kept unencrypted in your browser's local storage so the app
+          works offline. Anyone holding your unlocked device can read it.
+        </p>
+        <p>
+          Because the server has no copy of your key, losing every registered passkey means the
+          contents of your locked lists cannot be recovered by anyone, including the developer.
+        </p>
+      </div>
+
+      <h2>Who else handles it</h2>
+      <ul>
+        <li>
+          <strong>Google</strong> — sign-in runs through Google Sign-In and Firebase Authentication,
+          so Google handles the authentication itself and holds the account record it issues to this
+          app. It is governed by
+          <a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>.
+        </li>
+        <li>
+          <strong>The server</strong> — everything else is stored on a virtual private server rented
+          and administered by the developer. The hosting provider has custody of the machine in the
+          ordinary way any hosting provider does.
+        </li>
+      </ul>
+      <p>
+        Data is never transferred to anyone else, except where the law requires it. All traffic
+        between the app and the server is encrypted with HTTPS.
+      </p>
+
+      <h2>How long</h2>
+      <p>
+        Your account and your lists are kept until you delete them or ask for the account to be
+        deleted. Deleting a list deletes its items from the database immediately. If a copy of the
+        database taken for maintenance still holds any of it, that copy is deleted within 30 days.
+      </p>
+
+      <h2>Deleting your account and your data</h2>
+      <p>
+        You can delete any list, at any time, from inside the app. To delete the whole account —
+        the Google account details above, every list, every item and the wrapped encryption keys —
+        email
+        <a href="mailto:gpilligrim@gmail.com?subject=Shopping%20List%20account%20deletion"
+          >gpilligrim@gmail.com</a
+        >
+        from the address you signed in with, and it will be deleted within 30 days. Nothing is
+        retained afterwards apart from backup copies expiring on the schedule above.
+      </p>
+
+      <h2>Children</h2>
+      <p>
+        The app is not directed at children, and nothing in it is designed for or aimed at children
+        under 13.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>
+        You can ask for a copy of what is stored about you, ask for it to be corrected, or ask for
+        all of it to be deleted, at the address below. There is no charge and no form to fill in.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        If this policy changes, the date at the top changes with it, and the current version is
+        always at this address.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Evgenii Efimov —
+        <a href="mailto:gpilligrim@gmail.com">gpilligrim@gmail.com</a>
+      </p>
+
+      <footer>Shopping List · <a href="/">open the app</a></footer>
+    </main>
+  </body>
+</html>

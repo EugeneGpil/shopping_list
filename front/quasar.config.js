@@ -168,12 +168,18 @@ export default defineConfig((ctx) => {
           /^\/api\//,
           /^\/storage\//,
           /^\/sanctum\//,
+          // The privacy policy is a real static page, not a route. Without this the
+          // fallback hands index.html to anyone with the app installed and the policy
+          // silently becomes the app — and that URL is what Google Play checks.
+          /^\/privacy\.html$/,
         ]
 
         // The manifest screenshots are for the install dialog, which the browser
         // fetches itself before the app has been installed at all. Precaching them
         // would download ~180KB on every first visit that nothing ever reads back.
-        cfg.globIgnores = [...(cfg.globIgnores || []), 'screenshots/**']
+        // The privacy policy is excluded for the same reason — it is linked from the
+        // Play listing, not from the app, so precaching it is bytes nobody reads back.
+        cfg.globIgnores = [...(cfg.globIgnores || []), 'screenshots/**', 'privacy.html']
       },
     },
 

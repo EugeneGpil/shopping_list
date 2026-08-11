@@ -1,7 +1,7 @@
 {
   "name": "shopping-list",
   "version": "0.0.1",
-  "description": "Shopping List",
+  "description": "Shopping lists that work offline, with a lock for the private ones.",
   "productName": "Shopping List",
   "type": "module",
   "private": true,

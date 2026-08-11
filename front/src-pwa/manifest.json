@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Shopping List",
   "short_name": "Shopping",
-  "description": "Shared shopping lists you can tick off together.",
+  "description": "Shopping lists that work offline, with a lock for the private ones.",
   "lang": "en-US",
   "dir": "ltr",
   "display": "standalone",
