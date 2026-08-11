@@ -241,14 +241,27 @@ useRetryWhenOnline(() => {
   if (loadFailed.value || store.stale) load()
 })
 
-async function onLogout() {
-  await authStore.logout()
-  // The lists outlive this page, so they have to go explicitly — otherwise the next
-  // person to sign in sees them until their own fetch lands.
+/**
+ * What both ways of leaving have to do on this device, and **before the session ends**.
+ *
+ * The lists outlive this page, so they have to go explicitly — otherwise the next person to
+ * sign in sees them until their own fetch lands. The same for the key: leaving it in memory
+ * would let the next account's ciphertext be "decrypted" with somebody else's DEK, which
+ * fails in the least obvious way possible.
+ *
+ * The ordering is the part that is easy to get wrong, because getting it wrong is silent.
+ * Both caches are keyed by `authStore.user.uid`, and `logout` clears that — so called
+ * afterwards, these two clear the key for `anon` and leave the real ones sitting on the
+ * device. That is what this used to do.
+ */
+function clearLocalState() {
   store.clear()
-  // And the same for the key: leaving it in memory would let the next account's ciphertext
-  // be "decrypted" with somebody else's DEK, which fails in the least obvious way possible.
   encryption.reset()
+}
+
+async function onLogout() {
+  clearLocalState()
+  await authStore.logout()
   router.push('/login')
 }
 
@@ -286,12 +299,10 @@ function onDeleteAccount() {
       })
       return
     }
-    // Both halves of this order are load-bearing — see `deleteAccount` in the auth store.
-    // The caches go first because they are keyed by a uid the store is about to forget, and
-    // it is `endSession` rather than `logout` because a request now would resurrect the
-    // account through the 401 recovery path.
-    store.clear()
-    encryption.reset()
+    // Caches first, as on logout, and then `endSession` rather than `logout` — a request now
+    // would resurrect the account through the 401 recovery path. See `deleteAccount` in the
+    // auth store.
+    clearLocalState()
     await authStore.endSession()
     router.push('/login')
   })
