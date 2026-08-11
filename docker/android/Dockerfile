@@ -23,9 +23,16 @@ ENV ANDROID_HOME=/opt/android-sdk
 # 36 because that is what Bubblewrap generates (`compileSdkVersion`/`targetSdkVersion` in
 # twa/app/build.gradle) and what Play requires of new apps from 31 Aug 2026. These two must
 # stay in step with the generated project: an older platform here fails the build outright.
+# 36.1.0 rather than 36.0.0 for the build-tools, and that exact version is not a preference:
+# Bubblewrap hard-codes `BUILD_TOOLS_VERSION = '36.1.0'` in @bubblewrap/core and signs the
+# release with *that* copy of zipalign and apksigner. When it is missing it shells out to
+# `sdkmanager --install` mid-build — interactively, in a `--rm` container, over the network —
+# which is the one thing this image exists to prevent. Only the signed build (`make
+# android-build`) reaches that code path, so nothing caught it until the upload key existed.
+# Bumping @bubblewrap/cli means re-checking this constant.
 ARG CMDLINE_TOOLS_VERSION=13114758
 ARG ANDROID_PLATFORM=android-36
-ARG ANDROID_BUILD_TOOLS=36.0.0
+ARG ANDROID_BUILD_TOOLS=36.1.0
 # 35.0.0 as well, because the Android Gradle Plugin in Bubblewrap's project declares no
 # `buildToolsVersion` and falls back to its own default of 35. Without it here, Gradle
 # downloads it inside the container on *every* build and `--rm` throws it away again — a
@@ -41,7 +48,14 @@ RUN mkdir -p ${ANDROID_HOME} \
     && unzip -q /tmp/tools.zip -d /tmp/tools \
     && mkdir -p ${ANDROID_HOME}/cmdline-tools \
     && mv /tmp/tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
-    && rm -rf /tmp/tools.zip /tmp/tools
+    && rm -rf /tmp/tools.zip /tmp/tools \
+    # Bubblewrap still checks for the pre-2020 SDK layout: it accepts a path only if
+    # <sdk>/tools or <sdk>/bin exists, and looks for sdkmanager at <sdk>/bin/sdkmanager.
+    # Neither is where cmdline-tools puts them any more, so `bubblewrap build` rejected this
+    # SDK outright with "The provided androidSdk isn't correct." — while `update` and the
+    # plain Gradle builds, which never validate, worked fine. One symlink satisfies both
+    # lookups without a second copy of the tools.
+    && ln -s cmdline-tools/latest/bin ${ANDROID_HOME}/bin
 
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
 

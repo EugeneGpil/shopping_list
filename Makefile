@@ -92,13 +92,29 @@ TWA_PROJECT := twa/gradlew
 $(TWA_PROJECT): twa/twa-manifest.json
 	$(MAKE) android-update
 
+# The upload key is the app's permanent identity on Play — lose it and this app can never be
+# updated again by anyone — so it lives outside the repo and is bind-mounted read-only for the
+# one command that needs it. `twa/` would be the worst possible home for it: `.gitignore` is an
+# allowlist there, so `git clean -fdX` empties that directory down to twa-manifest.json and
+# would take the key with it. `twa-manifest.json` therefore points `signingKey.path` at the
+# mount target, /keys/upload.jks, not at anything under twa/.
+#
+# Override for a key kept elsewhere: `make android-build KEYSTORE=/path/to/upload.jks`.
+KEYSTORE ?= $(HOME)/keys/shopping_list/upload.jks
+
 # The keystore passwords are read from the environment rather than typed, so this is the one
 # command that needs secrets. Export them for the call and they stay out of the shell
 # history: `BUBBLEWRAP_KEYSTORE_PASSWORD=... BUBBLEWRAP_KEY_PASSWORD=... make android-build`
 android-build: $(TWA_PROJECT)
+	@test -f "$(KEYSTORE)" || { \
+		echo "No upload keystore at $(KEYSTORE)."; \
+		echo "Create it once (docs/publish_todo.md section 4) or pass KEYSTORE=<path>."; \
+		exit 1; \
+	}
 	USER_ID=$(shell id -u) GROUP_ID=$(shell id -g) \
 		docker compose --profile android run --rm \
 		-e BUBBLEWRAP_KEYSTORE_PASSWORD -e BUBBLEWRAP_KEY_PASSWORD \
+		-v "$(KEYSTORE):/keys/upload.jks:ro" \
 		android bubblewrap build --skipPwaValidation
 
 # Signs with the Android debug key, which Gradle generates by itself — so this is the one

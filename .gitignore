@@ -13,6 +13,11 @@ twa/*
 
 docker/volumes/postgres_data/**
 docker/volumes/php_home/**
+# The signing keys live outside the repo (Makefile `KEYSTORE`, docs/publish_todo.md section 4),
+# so this matches nothing today. It is here for the day somebody copies one in "just to try it".
+*.jks
+*.keystore
+
 docker/volumes/node_home/**
 # Holds the Android debug keystore, which is a key: kept out of git, but kept across builds
 # (docker-compose.yml, service `android`) so the debug APK's fingerprint does not change.

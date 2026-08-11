@@ -17,8 +17,8 @@
   "maskableIconUrl": "https://shopping-list.evgenii-efimov.ru/icons/icon-maskable-512x512.png",
   "splashScreenFadeOutDuration": 300,
   "signingKey": {
-    "path": "./android.keystore",
-    "alias": "android"
+    "path": "/keys/upload.jks",
+    "alias": "upload"
   },
   "appVersionName": "1",
   "appVersionCode": 1,
@@ -40,6 +40,10 @@
     {
       "name": "debug",
       "value": "9D:89:7C:D1:1E:DA:B2:B3:5B:9D:54:43:C9:44:1D:81:26:55:78:E7:D4:0E:54:6F:60:C6:15:63:52:1F:9F:8A"
+    },
+    {
+      "name": "upload",
+      "value": "8D:2A:66:39:5B:AD:AB:A0:69:A5:47:83:A8:06:93:AA:33:64:E8:11:54:7A:18:13:C2:08:13:F7:03:83:9D:2F"
     }
   ],
   "additionalTrustedOrigins": [],
