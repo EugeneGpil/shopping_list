@@ -14,4 +14,7 @@ twa/*
 docker/volumes/postgres_data/**
 docker/volumes/php_home/**
 docker/volumes/node_home/**
+# Holds the Android debug keystore, which is a key: kept out of git, but kept across builds
+# (docker-compose.yml, service `android`) so the debug APK's fingerprint does not change.
+docker/volumes/android_home/**
 !docker/volumes/**/.gitkeep

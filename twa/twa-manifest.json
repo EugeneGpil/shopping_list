@@ -36,7 +36,12 @@
   "fullScopeUrl": "https://shopping-list.evgenii-efimov.ru/",
   "minSdkVersion": 21,
   "orientation": "portrait",
-  "fingerprints": [],
+  "fingerprints": [
+    {
+      "name": "debug",
+      "value": "9D:89:7C:D1:1E:DA:B2:B3:5B:9D:54:43:C9:44:1D:81:26:55:78:E7:D4:0E:54:6F:60:C6:15:63:52:1F:9F:8A"
+    }
+  ],
   "additionalTrustedOrigins": [],
   "retainedBundles": [],
   "protocolHandlers": [],

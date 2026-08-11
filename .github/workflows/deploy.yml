@@ -109,6 +109,12 @@ jobs:
       - name: Fail if the service worker is missing
         run: test -f front/dist/pwa/sw.js && test -f front/dist/pwa/manifest.json
 
+      # A dot-directory under front/public/, so it is the one build output a copy step or a
+      # tool's glob can silently drop — and losing it does not break the site, it just puts a
+      # URL bar back on the Android app, which nobody would connect to a deploy.
+      - name: Fail if the Digital Asset Links file is missing
+        run: test -f front/dist/pwa/.well-known/assetlinks.json
+
       # --- artifact ------------------------------------------------------
 
       - name: Assemble release artifact

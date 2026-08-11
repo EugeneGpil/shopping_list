@@ -82,6 +82,14 @@ services:
   # `~/.gradle` is a named volume rather than a bind mount: it holds a few hundred MB of
   # downloaded Gradle distributions and caches that belong to the container, not the repo,
   # and keeping them means the second build is not another cold start.
+  #
+  # `~/.android` is the opposite case and is a bind mount for it: Gradle generates
+  # `debug.keystore` there on the first debug build, and with `--rm` and no mount that key —
+  # and therefore the APK's SHA-256 fingerprint — was a different one on every build. The
+  # fingerprint is published in `/.well-known/assetlinks.json`, which is what makes the TWA
+  # run without a URL bar, so it has to be stable across builds. Under docker/volumes/ like
+  # the other bind mounts, gitignored, and pre-created with a .gitkeep because a bind mount
+  # whose source is missing is created by the daemon as root.
   android:
     profiles: ["android"]
     image: shopping_list-android
@@ -93,6 +101,7 @@ services:
     volumes:
       - ./twa:/work
       - android_gradle:/home/app/.gradle
+      - ./docker/volumes/android_home:/home/app/.android
 
   mailpit:
     image: axllent/mailpit:v1.29.7
