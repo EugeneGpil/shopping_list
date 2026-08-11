@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EncryptionController;
 use App\Http\Controllers\Api\HealthController;
@@ -14,6 +15,10 @@ Route::post('auth/firebase', [AuthController::class, 'firebase']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
+
+    // Deletes the user and everything hanging off them. Required by Play's User Data policy
+    // for any app with accounts, and irreversible — see the controller.
+    Route::delete('account', [AccountController::class, 'destroy']);
 
     // Params passed via query string only (no path params).
     Route::get('shopping-lists', [ShoppingListController::class, 'index']);

@@ -38,6 +38,14 @@
               <q-item-section avatar><q-icon name="logout" /></q-item-section>
               <q-item-section>Log out</q-item-section>
             </q-item>
+            <!-- Last, separated, and the only red thing in the menu: it is one tap from the
+                 same place as "Log out" and does something nothing can undo. -->
+            <q-item clickable @click="onDeleteAccount">
+              <q-item-section avatar>
+                <q-icon name="delete_forever" color="negative" />
+              </q-item-section>
+              <q-item-section class="text-negative">Delete account</q-item-section>
+            </q-item>
           </q-list>
         </q-menu>
       </q-btn>
@@ -242,6 +250,51 @@ async function onLogout() {
   // be "decrypted" with somebody else's DEK, which fails in the least obvious way possible.
   encryption.reset()
   router.push('/login')
+}
+
+/**
+ * The one action in the app with no undo and no server-side copy to recover from — Play's
+ * User Data policy requires it to be reachable from inside the app, and the privacy policy
+ * describes exactly what it removes.
+ *
+ * `persistent` because a tap outside the dialog is not consent, and the button says what it
+ * does rather than "OK" — this menu entry sits one row below "Log out", and the two must not
+ * be confusable at the moment of confirming.
+ */
+function onDeleteAccount() {
+  $q.dialog({
+    title: 'Delete account',
+    message:
+      'This deletes your account, every list on it, and the keys to your locked lists. ' +
+      'Nobody can undo it or recover the contents afterwards — not even the developer, ' +
+      'because the server never had the keys.',
+    cancel: true,
+    persistent: true,
+    ok: { label: 'Delete everything', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await authStore.deleteAccount()
+    } catch (err) {
+      // Nothing local has been touched, so the session is still usable and the only thing
+      // to do is say so. Unlike a list edit this cannot be queued for later: a deletion
+      // that happens whenever the connection returns is not something to leave armed.
+      $q.notify({
+        type: 'negative',
+        message: isNetworkError(err)
+          ? 'You need to be online to delete your account.'
+          : 'Could not delete your account.',
+      })
+      return
+    }
+    // Both halves of this order are load-bearing — see `deleteAccount` in the auth store.
+    // The caches go first because they are keyed by a uid the store is about to forget, and
+    // it is `endSession` rather than `logout` because a request now would resurrect the
+    // account through the 401 recovery path.
+    store.clear()
+    encryption.reset()
+    await authStore.endSession()
+    router.push('/login')
+  })
 }
 
 onMounted(load)

@@ -161,10 +161,39 @@ export const useAuthStore = defineStore('auth', {
 
     async logout() {
       await api.post('auth/logout').catch(() => {})
+      await this.endSession()
+    },
+
+    /**
+     * Everything a sign-out does on this device, with nothing said to the server.
+     *
+     * Split out of `logout` for the one caller that must not talk to the server: after the
+     * account is deleted there is no token left to revoke, and asking anyway is actively
+     * harmful (see `deleteAccount`).
+     */
+    async endSession() {
       localStorage.removeItem(TOKEN_KEY)
       await signOut(auth)
       this.user = null
       this.sessionExpired = false
+    },
+
+    /**
+     * Delete the account and everything on it. Throws if the server refuses, and touches
+     * nothing locally either way, so a failure leaves the session exactly as it was.
+     *
+     * The caller does the teardown, and both halves of how matter:
+     *
+     * 1. Clear the per-user caches **first**. They are keyed by `user.uid`, which this store
+     *    is about to forget — clear them after and the key resolves to `anon`, leaving the
+     *    deleted account's lists sitting in localStorage.
+     * 2. Then `endSession()`, never `logout()`. `logout` POSTs with a token the server has
+     *    just deleted; the 401 interceptor in `api.js` reads that as an expired session and
+     *    trades the still-valid Firebase session for a fresh one — and `auth/firebase`
+     *    is an `updateOrCreate`, so it would put the account straight back, empty.
+     */
+    async deleteAccount() {
+      await api.del('account')
     },
   },
 })
