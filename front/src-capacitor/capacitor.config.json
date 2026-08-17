@@ -4,5 +4,11 @@
   "webDir": "www",
   "server": {
     "url": "https://shopping-list.evgenii-efimov.ru"
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
   }
 }

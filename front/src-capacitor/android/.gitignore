@@ -61,8 +61,14 @@ captures/
 .externalNativeBuild
 .cxx/
 
-# Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Google Services (e.g. APIs or Firebase) — **tracked on purpose**, hence no entry here.
+#
+# It is not a secret: it is compiled into every APK that ships, and the keys in it are scoped
+# to the package name plus the certificate fingerprints registered in the Firebase console, so
+# a copy without a matching signing key is useless. Committing it is what lets a fresh clone
+# build an APK without a trip to the console — the same reason the SDK and JDK versions are
+# pinned in docker/capacitor/. Regenerate from the console after adding a fingerprint (there is
+# a shape check in docs/go_webview.md §11).
 
 # Freeline
 freeline.py

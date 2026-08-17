@@ -4,6 +4,7 @@
   "description": "Android shell for the Shopping List PWA (docs/go_webview.md)",
   "private": true,
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.4.0",
     "@capacitor/android": "^8.3.1",
     "@capacitor/app": "^8.0.0",
     "@capacitor/cli": "^8.0.0",

@@ -30,14 +30,18 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
 
-        // A separate package name for debug builds, so this can be installed alongside the
-        // Play TWA rather than replacing it — same phone, both apps, which is the only way to
-        // compare them. Two consequences, both wanted:
-        //   - the debug app has its own storage, so signing in here does not touch the TWA;
-        //   - it needs its own statement in /.well-known/assetlinks.json (it has one), because
-        //     Credential Manager matches on package name, not on a prefix.
+        // **No `applicationIdSuffix` here, deliberately.** A suffixed debug package would
+        // install beside the Play TWA instead of replacing it, which is nicer for comparing the
+        // two — but every id has to exist in `google-services.json`, and the
+        // `com.google.gms.google-services` plugin fails the build outright ("No matching client
+        // found for package name") for one that does not. One package means one Android app to
+        // register in the Firebase console, with one set of fingerprints, and that was the
+        // trade taken.
+        //
+        // The consequence on the test phone: this build and the Play TWA cannot coexist. The
+        // debug key is not Play's, so installing over it is refused — `adb uninstall
+        // ru.evgenii_efimov.shopping_list` first, and reinstall the TWA from Play to go back.
         debug {
-            applicationIdSuffix ".dev"
             versionNameSuffix "-dev"
         }
     }
