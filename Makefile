@@ -1,5 +1,6 @@
 .PHONY: help setup build up down restart logs php node migrate fresh artisan composer \
-	android android-update android-shell android-build android-debug
+	android android-update android-shell android-build android-debug \
+	capacitor capacitor-shell capacitor-install capacitor-sync capacitor-debug
 
 help:
 	@echo ""
@@ -22,6 +23,13 @@ help:
 	@echo "  make android-debug      Build a debug APK — no keystore, no secrets needed"
 	@echo "  make android-build      Build the signed AAB + APK for Play (needs the keystore)"
 	@echo "  make android-shell      Shell into the Android toolchain container"
+	@echo ""
+	@echo "  Capacitor / WebView app (see docs/go_webview.md §9)"
+	@echo "  make capacitor-install  npm install in src-capacitor (Gradle needs it)"
+	@echo "  make capacitor-sync     Copy config + web assets into the Android project"
+	@echo "  make capacitor-debug    Build the debug APK to sideload"
+	@echo "  make capacitor CMD='...' Run any command in the Capacitor container"
+	@echo "  make capacitor-shell    Shell into the Capacitor toolchain container"
 	@echo ""
 
 setup:
@@ -133,3 +141,53 @@ android-debug: $(TWA_PROJECT)
 android-shell:
 	USER_ID=$(shell id -u) GROUP_ID=$(shell id -g) \
 		docker compose --profile android run --rm android bash
+
+# The Capacitor build — the WebView app (docs/go_webview.md §9). Same one-shot `run --rm`
+# pattern as the TWA targets above, in its own container (docker/capacitor/Dockerfile).
+#
+# `front/src-capacitor` is mounted at /work, so everything below acts on the generated Android
+# project in place. Order for a first build from a clean checkout:
+#
+#   make capacitor-install   # once, and after any dependency change
+#   make capacitor-sync      # after any edit to capacitor.config.json
+#   make capacitor-debug     # the APK
+CAP_RUN = USER_ID=$(shell id -u) GROUP_ID=$(shell id -g) \
+	docker compose --profile capacitor run --rm capacitor
+
+capacitor:
+	$(CAP_RUN) $(CMD)
+
+capacitor-shell:
+	$(CAP_RUN) bash
+
+# Gradle cannot even configure the project without this: `capacitor.settings.gradle` declares
+# the plugin subprojects as directories inside ../node_modules, so a missing install fails at
+# settings evaluation with a path error rather than anything mentioning npm.
+capacitor-install:
+	$(CAP_RUN) npm install
+	@echo "Installed. Next: make capacitor-sync"
+
+# `cap sync` copies capacitor.config.json into app/src/main/assets/, which is where the app
+# reads `server.url` from at runtime — so an edit to that file does nothing until this runs.
+#
+# It also copies `webDir` into the APK, and refuses to run when that directory is missing. The
+# app loads the live site (server.url), so those assets are never rendered; a placeholder is
+# enough to keep the copy step happy, and is created rather than assumed because
+# src-capacitor/www is gitignored. A real bundle is only needed if server.url is ever dropped
+# — that is `quasar build -m capacitor` in the node container.
+capacitor-sync:
+	$(CAP_RUN) sh -c 'mkdir -p www \
+		&& [ -f www/index.html ] || echo "<!doctype html><title>Shopping List</title>" > www/index.html; \
+		exec npx cap sync android'
+
+# Signs with the Android debug key from the shared docker/volumes/android_home — the same key
+# whose fingerprint is published in assetlinks.json, which is what lets this build reach the
+# passkeys. No secrets needed, and not installable on Play.
+#
+# `sh -c` with an explicit cd rather than a bare `./gradlew`: a relative program name is
+# resolved by runc against the container's cwd, and the failure when it cannot be reads like a
+# broken image rather than a missing file.
+capacitor-debug:
+	$(CAP_RUN) sh -c 'cd /work/android && exec ./gradlew --no-daemon assembleDebug'
+	@echo "APK: front/src-capacitor/android/app/build/outputs/apk/debug/app-debug.apk"
+	@echo "Install: adb install -r front/src-capacitor/android/app/build/outputs/apk/debug/app-debug.apk"

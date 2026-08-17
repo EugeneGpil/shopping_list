@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Debug-only override of the launcher label. The debug build has its own package name
+  (`applicationIdSuffix ".dev"`), so it sits on the phone next to the Play TWA — and two icons
+  both labelled "Shopping" is exactly the confusion this build exists to avoid. Variant
+  resources replace main ones, so nothing else in strings.xml needs repeating here.
+-->
+<resources>
+    <string name="app_name">Shopping dev</string>
+</resources>

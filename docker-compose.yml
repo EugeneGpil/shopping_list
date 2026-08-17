@@ -103,6 +103,34 @@ services:
       - android_gradle:/home/app/.gradle
       - ./docker/volumes/android_home:/home/app/.android
 
+  # The Capacitor build (`docs/go_webview.md` §9) — the WebView app that renders the same
+  # origin without Chrome's first-launch disclosure. Same shape as `android` above (one-shot,
+  # `run --rm`, everything pinned in the image) but a separate image, because Capacitor's
+  # generated project compiles at Java 21 while Bubblewrap's needs 17; see
+  # docker/capacitor/Dockerfile.
+  #
+  # Its own profile as well as its own image, so `--profile android` still means "the TWA".
+  capacitor:
+    profiles: ["capacitor"]
+    image: shopping_list-capacitor
+    build:
+      context: ./docker/capacitor
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    volumes:
+      - ./front/src-capacitor:/work
+      # **The same .android as the TWA build, deliberately.** Gradle signs debug builds with
+      # ~/.android/debug.keystore, and that keystore's SHA-256 is already published in
+      # /.well-known/assetlinks.json for the TWA. Sharing it means a Capacitor debug APK is
+      # asset-link verified — which is what lets it reach the passkeys — with no new
+      # fingerprint to publish. A private keystore here would silently fail that check.
+      - ./docker/volumes/android_home:/home/app/.android
+      - capacitor_gradle:/home/app/.gradle
+      # npm's cache, so `capacitor-install` does not re-download the plugin packages on every
+      # `--rm` invocation. Disposable, hence a volume rather than a bind mount.
+      - capacitor_npm:/home/app/.npm
+
   mailpit:
     image: axllent/mailpit:v1.29.7
     ports:
@@ -110,8 +138,14 @@ services:
       - "${MAILPIT_UI_PORT:-8025}:8025"
     restart: unless-stopped
 
-# Only the Android build cache. Everything else in this project is a bind mount under
-# docker/volumes/ so it can be inspected and backed up with the repo; Gradle's caches are
-# large, disposable and of no interest outside the container.
+# Only the Android build caches. Everything else in this project is a bind mount under
+# docker/volumes/ so it can be inspected and backed up with the repo; Gradle's caches and
+# npm's are large, disposable and of no interest outside the container.
+#
+# The two Gradle homes are separate on purpose: the TWA build runs Gradle 8.11 under JDK 17
+# and the Capacitor build Gradle 8.14 under JDK 21, and a shared GRADLE_USER_HOME would have
+# them evicting each other's daemons and caches on every alternating build.
 volumes:
   android_gradle:
+  capacitor_gradle:
+  capacitor_npm:

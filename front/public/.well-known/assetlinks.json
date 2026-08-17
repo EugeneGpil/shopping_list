@@ -1,12 +1,25 @@
 [
   {
-    "relation": ["delegate_permission/common.handle_all_urls"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
     "target": {
       "namespace": "android_app",
       "package_name": "ru.evgenii_efimov.shopping_list",
       "sha256_cert_fingerprints": [
         "9D:89:7C:D1:1E:DA:B2:B3:5B:9D:54:43:C9:44:1D:81:26:55:78:E7:D4:0E:54:6F:60:C6:15:63:52:1F:9F:8A",
         "8D:2A:66:39:5B:AD:AB:A0:69:A5:47:83:A8:06:93:AA:33:64:E8:11:54:7A:18:13:C2:08:13:F7:03:83:9D:2F"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ru.evgenii_efimov.shopping_list.dev",
+      "sha256_cert_fingerprints": [
+        "9D:89:7C:D1:1E:DA:B2:B3:5B:9D:54:43:C9:44:1D:81:26:55:78:E7:D4:0E:54:6F:60:C6:15:63:52:1F:9F:8A"
       ]
     }
   }

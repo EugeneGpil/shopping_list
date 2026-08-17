@@ -1,10 +1,18 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.forest.app"
+    namespace = "ru.evgenii_efimov.shopping_list"
     compileSdk = rootProject.ext.compileSdkVersion
+
+    // Pinned so the container can pin the same version. Left unset, AGP falls back to its own
+    // default and installs it mid-build over the network — see docker/capacitor/Dockerfile.
+    buildToolsVersion = "36.0.0"
+
     defaultConfig {
-        applicationId "com.forest.app"
+        // The same package name as the TWA on Play (twa/twa-manifest.json). Permanent once an
+        // AAB is uploaded, and it is what /.well-known/assetlinks.json names — a different id
+        // here is an app that cannot reach the passkeys.
+        applicationId "ru.evgenii_efimov.shopping_list"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -21,6 +29,17 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+
+        // A separate package name for debug builds, so this can be installed alongside the
+        // Play TWA rather than replacing it — same phone, both apps, which is the only way to
+        // compare them. Two consequences, both wanted:
+        //   - the debug app has its own storage, so signing in here does not touch the TWA;
+        //   - it needs its own statement in /.well-known/assetlinks.json (it has one), because
+        //     Credential Manager matches on package name, not on a prefix.
+        debug {
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+        }
     }
 }
 
@@ -35,6 +54,11 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // Declared here even though capacitor-android already depends on it: that is an
+    // `implementation` dependency of a library module, so its classes are not on this module's
+    // compile classpath and MainActivity cannot see WebSettingsCompat without this line. The
+    // version is the one Capacitor itself pins, in variables.gradle — do not fork it.
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

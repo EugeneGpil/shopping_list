@@ -1,5 +1,8 @@
 {
-  "appId": "com.forest.app",
-  "appName": "forest",
-  "webDir": "www"
+  "appId": "ru.evgenii_efimov.shopping_list",
+  "appName": "Shopping List",
+  "webDir": "www",
+  "server": {
+    "url": "https://shopping-list.evgenii-efimov.ru"
+  }
 }

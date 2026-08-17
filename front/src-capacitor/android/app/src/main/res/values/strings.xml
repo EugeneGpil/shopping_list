@@ -1,7 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">forest</string>
-    <string name="title_activity_main">forest</string>
-    <string name="package_name">com.forest.app</string>
-    <string name="custom_url_scheme">com.forest.app</string>
+    <!-- The launcher label. Kept short, and the same as the TWA's (twa-manifest.json
+         launcherName), so replacing one app with the other does not rename the icon. -->
+    <string name="app_name">Shopping</string>
+    <string name="title_activity_main">Shopping List</string>
+    <string name="package_name">ru.evgenii_efimov.shopping_list</string>
+    <!-- Capacitor's deep-link scheme. Nothing uses it yet; it must simply not be another
+         app's package name. -->
+    <string name="custom_url_scheme">ru.evgenii_efimov.shopping_list</string>
 </resources>
