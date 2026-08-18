@@ -138,6 +138,15 @@ const definition = defineStore('shoppingLists', {
     /** Tombstoned lists stay in `lists` until the server agrees, but are not shown. */
     visibleLists: (state) => state.lists.filter((l) => !l.pendingDelete),
 
+    /**
+     * How many of the lists on screen are locked. Read by the encryption store, which needs
+     * it for the one rule it cannot answer alone: removing the last passkey while any list is
+     * still encrypted would leave that list unopenable for good.
+     */
+    encryptedCount() {
+      return this.visibleLists.filter((l) => l.encrypted).length
+    },
+
     /** Changes waiting for a connection, for the "not synced yet" indicator. */
     pendingCount: (state) =>
       state.lists.filter((l) => l.dirty || l.pendingDelete).length + (state.orderDirty ? 1 : 0),

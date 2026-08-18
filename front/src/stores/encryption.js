@@ -1,7 +1,12 @@
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api, isNetworkError } from 'src/api'
 import { deriveKek, generateDek, randomSalt, unwrapDek, wrapDek } from 'src/utils/crypto'
-import { isPasskeySupported, passkeyPrf, registerPasskey } from 'src/utils/passkey'
+import {
+  hasPlatformAuthenticator,
+  isPasskeySupported,
+  passkeyPrf,
+  registerPasskey,
+} from 'src/utils/passkey'
 import { useAuthStore } from 'src/stores/auth'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { clearDek, getDek, isUnlocked, setDek } from 'src/stores/shoppingLists/encryption'
@@ -50,6 +55,14 @@ export const useEncryptionStore = defineStore('encryption', {
     /** Mirrors the module-level key, so the UI can react to it. */
     unlocked: isUnlocked(),
     busy: false,
+    /**
+     * Whether this device has a built-in authenticator — a fingerprint reader, a face camera,
+     * a screen lock — as opposed to only being able to use a separate security key.
+     *
+     * `null` until asked, which is not the same as `false`: the setup screen warns on `false`,
+     * and starting there would flash a warning at every device for as long as the query takes.
+     */
+    platformAuthenticator: null,
   }),
 
   getters: {
@@ -69,6 +82,38 @@ export const useEncryptionStore = defineStore('encryption', {
   actions: {
     _uid() {
       return useAuthStore().user?.uid
+    },
+
+    /**
+     * How many lists this key is currently the way into.
+     *
+     * Which lists are encrypted belongs to the lists (§1) and this store deliberately does not
+     * track it — but "may this passkey be removed" cannot be answered without it, so this is
+     * the one question it asks across.
+     *
+     * An action rather than a getter on purpose: nothing renders it, both callers want it at
+     * the moment of a tap, and a getter would create the lists store — and run its
+     * hydration — from inside a computed.
+     */
+    lockedListCount() {
+      return useShoppingListsStore().encryptedCount
+    },
+
+    /**
+     * Whether this passkey is the only thing that can still open a locked list.
+     *
+     * The server enforces the same rule and is the one that matters (409); this is here so the
+     * button can say what it will do before it is pressed. With nothing locked the last passkey
+     * is removable — a key that opens nothing is not protecting anything.
+     */
+    isLastWayIn() {
+      return this.keys.length < 2 && this.lockedListCount() > 0
+    },
+
+    /** Asked once per session, the first time a setup screen is opened. */
+    async checkPlatformAuthenticator() {
+      if (this.platformAuthenticator !== null) return
+      this.platformAuthenticator = await hasPlatformAuthenticator()
     },
 
     _remember(rows) {
@@ -217,11 +262,19 @@ export const useEncryptionStore = defineStore('encryption', {
      * Give a second passkey access to the same data key — §1's entire recovery story, and the
      * only way to read these lists on a device the first passkey does not sync to.
      *
-     * Requires this session to be unlocked, because the DEK being wrapped has to be the one
-     * every list is already encrypted under. The server cannot check that (§5), so it is checked
-     * here by construction: there is nothing else to wrap.
+     * Unlocks first when this session is not already holding the key, because the DEK being
+     * wrapped has to be the one every list is already encrypted under — so it has to be in hand,
+     * and there is no version of this that works without it. Nothing unlocks at boot any more
+     * (§1), so on most visits this is two prompts in a row: one to open the key, one to create
+     * the credential. Doing it here rather than telling the caller to go and open a locked list
+     * first is the difference between a working button and a dead end.
+     *
+     * The server cannot check that the copy wraps the right key (§5), so it is checked here by
+     * construction: after the unlock there is nothing else to wrap.
      */
     async addPasskey() {
+      if (!this.unlocked) await this.unlock()
+
       const dek = getDek()
       if (!dek) throw new Error('Unlock first: adding a passkey needs the key it is copying.')
       this.busy = true
