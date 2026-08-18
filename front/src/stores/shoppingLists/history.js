@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { privates } from './privates'
 
 const HISTORY_LIMIT = 100
 
@@ -11,101 +11,85 @@ const serialize = (arr) =>
  * list is small and a save rewrites every row server-side anyway, so there is nothing to
  * gain from per-field diffs.
  *
- * Owns the stacks and the in-flight snapshots. The stacks belong to the list that is
- * open, so `reset()` runs on every list switch — a snapshot of list A must never be
- * restorable onto list B. `scheduleSave` is called whenever this module changes the
- * rows or commits an edit.
+ * The stacks are `_past`/`_future` in the store's state, which is what makes `canUndo` and
+ * `canRedo` reactive; the two in-flight snapshots are not state and live in `privates`.
+ * All of it belongs to the list that is open, so `_resetHistory()` runs on every list
+ * switch — a snapshot of list A must never be restorable onto list B. `_scheduleSave` is
+ * called whenever this module changes the rows or commits an edit.
  */
-export function createHistory({ current, scheduleSave, touch }) {
-  const past = ref([])
-  const future = ref([])
-  const canUndo = computed(() => past.value.length > 0)
-  const canRedo = computed(() => future.value.length > 0)
-
-  let editSnapshot = null
-  let dragSnapshot = null
-
-  const rows = () => current.value?.items ?? null
-
-  function pushHistory(snapshot) {
-    past.value.push(snapshot)
-    if (past.value.length > HISTORY_LIMIT) past.value.shift()
-    future.value = []
-  }
+export default {
+  _pushHistory(snapshot) {
+    this._past.push(snapshot)
+    if (this._past.length > HISTORY_LIMIT) this._past.shift()
+    this._future = []
+  },
 
   /** Snapshot the current rows before a mutation the caller is about to make. */
-  function record() {
-    const list = rows()
+  _record() {
+    const list = this._rowList()
     if (!list) return
-    touch()
-    pushHistory(clone(list))
-  }
+    this._touch()
+    this._pushHistory(clone(list))
+  },
 
-  function undo() {
-    if (!past.value.length || !current.value) return
-    future.value.push(clone(rows()))
-    current.value.items = past.value.pop()
-    scheduleSave()
-  }
-  function redo() {
-    if (!future.value.length || !current.value) return
-    past.value.push(clone(rows()))
-    current.value.items = future.value.pop()
-    scheduleSave()
-  }
+  undo() {
+    if (!this._past.length || !this.current) return
+    this._future.push(clone(this._rowList()))
+    this.current.items = this._past.pop()
+    this._scheduleSave()
+  },
+
+  redo() {
+    if (!this._future.length || !this.current) return
+    this._past.push(clone(this._rowList()))
+    this.current.items = this._future.pop()
+    this._scheduleSave()
+  },
 
   /** Commit a snapshot only if the rows actually changed while it was held. */
-  function commit(snapshot) {
-    const list = rows()
+  _commit(snapshot) {
+    const list = this._rowList()
     if (snapshot && list && serialize(snapshot) !== serialize(list)) {
-      pushHistory(snapshot)
-      scheduleSave()
+      this._pushHistory(snapshot)
+      this._scheduleSave()
     }
-  }
+  },
 
   // typing: snapshot on focus, commit on change
-  function beginEdit() {
-    const list = rows()
+  beginEdit() {
+    const list = this._rowList()
     if (!list) return
     // Focusing a field is the user taking the list over: from here on a background
     // refresh must not replace the rows under them.
-    touch()
-    editSnapshot = clone(list)
-  }
-  function endEdit() {
-    commit(editSnapshot)
-    editSnapshot = null
-  }
+    this._touch()
+    privates(this).editSnapshot = clone(list)
+  },
+
+  endEdit() {
+    const own = privates(this)
+    this._commit(own.editSnapshot)
+    own.editSnapshot = null
+  },
 
   // drag reorder: same pair, driven by draggable's start/end
-  function beginDrag() {
-    const list = rows()
+  beginDrag() {
+    const list = this._rowList()
     if (!list) return
-    touch()
-    dragSnapshot = clone(list)
-  }
-  function endDrag() {
-    commit(dragSnapshot)
-    dragSnapshot = null
-  }
+    this._touch()
+    privates(this).dragSnapshot = clone(list)
+  },
 
-  function reset() {
-    past.value = []
-    future.value = []
-    editSnapshot = null
-    dragSnapshot = null
-  }
+  endDrag() {
+    const own = privates(this)
+    this._commit(own.dragSnapshot)
+    own.dragSnapshot = null
+  },
 
-  return {
-    canUndo,
-    canRedo,
-    record,
-    undo,
-    redo,
-    beginEdit,
-    endEdit,
-    beginDrag,
-    endDrag,
-    reset,
-  }
+  _resetHistory() {
+    const own = privates(this)
+    this._past = []
+    this._future = []
+    own.editSnapshot = null
+    own.dragSnapshot = null
+  },
 }

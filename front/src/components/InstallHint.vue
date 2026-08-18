@@ -18,16 +18,23 @@
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue'
+<script>
 import { dismissInstallHint, shouldOfferInstallHint } from 'src/utils/installHint'
 
-// Decided once, on mount: nothing that feeds the decision can change while the page is open
-// — an install is a new window, not a state change in this one.
-const show = ref(shouldOfferInstallHint())
+export default {
+  name: 'InstallHint',
 
-function hide() {
-  dismissInstallHint()
-  show.value = false
+  data() {
+    // Decided once, when the component is created: nothing that feeds the decision can change
+    // while the page is open — an install is a new window, not a state change in this one.
+    return { show: shouldOfferInstallHint() }
+  },
+
+  methods: {
+    hide() {
+      dismissInstallHint()
+      this.show = false
+    },
+  },
 }
 </script>

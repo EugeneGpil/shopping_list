@@ -13,22 +13,33 @@
   </q-banner>
 </template>
 
-<script setup>
-import { ref } from 'vue'
+<script>
 import { useAuthStore } from 'src/stores/auth'
 
-const authStore = useAuthStore()
+export default {
+  name: 'SessionExpiredBanner',
 
-const signingIn = ref(false)
+  data() {
+    return { signingIn: false }
+  },
 
-// A closed popup or a second refusal leaves the flag up, which is right: nothing has been
-// fixed, so the banner stays. The store has already said what it can about why.
-async function signIn() {
-  signingIn.value = true
-  try {
-    await authStore.signInAgain()
-  } finally {
-    signingIn.value = false
-  }
+  computed: {
+    authStore() {
+      return useAuthStore()
+    },
+  },
+
+  methods: {
+    // A closed popup or a second refusal leaves the flag up, which is right: nothing has been
+    // fixed, so the banner stays. The store has already said what it can about why.
+    async signIn() {
+      this.signingIn = true
+      try {
+        await this.authStore.signInAgain()
+      } finally {
+        this.signingIn = false
+      }
+    },
+  },
 }
 </script>

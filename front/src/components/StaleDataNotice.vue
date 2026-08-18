@@ -8,10 +8,18 @@
   </div>
 </template>
 
-<script setup>
+<script>
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-// Reads the store directly, as the save indicator does: nothing about this is a page's
-// business, and both pages want the same line in the same words.
-const store = useShoppingListsStore()
+export default {
+  name: 'StaleDataNotice',
+
+  computed: {
+    // Reads the store directly, as the save indicator does: nothing about this is a page's
+    // business, and both pages want the same line in the same words.
+    store() {
+      return useShoppingListsStore()
+    },
+  },
+}
 </script>

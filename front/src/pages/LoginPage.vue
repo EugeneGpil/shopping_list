@@ -17,23 +17,33 @@
   </div>
 </template>
 
-<script setup>
-import { watch } from 'vue'
-import { useRouter } from 'vue-router'
+<script>
 import { useAuthStore } from 'src/stores/auth'
 
-const router = useRouter()
-const authStore = useAuthStore()
+export default {
+  name: 'LoginPage',
 
-watch(
-  () => authStore.isLoggedIn,
-  (loggedIn) => {
-    if (loggedIn) router.push('/')
+  computed: {
+    authStore() {
+      return useAuthStore()
+    },
   },
-  { immediate: true },
-)
 
-// The popup itself lives in the store, because the expired-session banner signs in the
-// same way and there must not be two versions of what "sign in" means.
-const loginWithGoogle = () => authStore.loginWithGoogle()
+  watch: {
+    'authStore.isLoggedIn': {
+      handler(loggedIn) {
+        if (loggedIn) this.$router.push('/')
+      },
+      immediate: true,
+    },
+  },
+
+  methods: {
+    // The popup itself lives in the store, because the expired-session banner signs in the
+    // same way and there must not be two versions of what "sign in" means.
+    loginWithGoogle() {
+      return this.authStore.loginWithGoogle()
+    },
+  },
+}
 </script>

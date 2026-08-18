@@ -118,108 +118,134 @@
   </q-dialog>
 </template>
 
-<script setup>
-import { computed, ref } from 'vue'
-import { useQuasar } from 'quasar'
+<script>
 import { candidatesFromZip } from 'src/utils/keepNotes'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-const open = defineModel({ type: Boolean })
+export default {
+  name: 'ImportFromKeepDialog',
 
-const $q = useQuasar()
-const store = useShoppingListsStore()
+  props: { modelValue: Boolean },
 
-const file = ref(null)
-const parsing = ref(false)
-const error = ref('')
-const candidates = ref([])
-const selected = ref(new Set())
+  emits: ['update:modelValue'],
 
-const selectedCount = computed(() => selected.value.size)
+  data() {
+    return {
+      file: null,
+      parsing: false,
+      error: '',
+      candidates: [],
+      selected: new Set(),
+    }
+  },
 
-const ofKind = (kind) => candidates.value.filter((c) => c.kind === kind)
+  computed: {
+    store() {
+      return useShoppingListsStore()
+    },
 
-/** Only the kinds this archive actually holds, so an empty group is never offered. */
-const groups = computed(() =>
-  [
-    { kind: 'list', label: 'Lists', candidates: ofKind('list') },
-    { kind: 'text', label: 'Plain text notes', candidates: ofKind('text') },
-  ].filter((g) => g.candidates.length),
-)
+    open: {
+      get() {
+        return this.modelValue
+      },
+      set(value) {
+        this.$emit('update:modelValue', value)
+      },
+    },
 
-/** `null` is Quasar's indeterminate — the honest state when only some of a group is on. */
-function groupState(group) {
-  const on = group.candidates.filter((c) => selected.value.has(c.key)).length
-  if (!on) return false
-  return on === group.candidates.length ? true : null
-}
+    selectedCount() {
+      return this.selected.size
+    },
 
-function toggleGroup(group) {
-  const next = new Set(selected.value)
-  // Partly-on reads as "not all of it yet", so the useful move is to finish selecting it.
-  const turnOn = groupState(group) !== true
-  for (const c of group.candidates) {
-    if (turnOn) next.add(c.key)
-    else next.delete(c.key)
-  }
-  selected.value = next
-}
+    /** Only the kinds this archive actually holds, so an empty group is never offered. */
+    groups() {
+      return [
+        { kind: 'list', label: 'Lists', candidates: this.ofKind('list') },
+        { kind: 'text', label: 'Plain text notes', candidates: this.ofKind('text') },
+      ].filter((g) => g.candidates.length)
+    },
 
-const droppedTotal = computed(() =>
-  candidates.value
-    .filter((c) => selected.value.has(c.key))
-    .reduce((sum, c) => sum + c.droppedChecked, 0),
-)
+    droppedTotal() {
+      return this.candidates
+        .filter((c) => this.selected.has(c.key))
+        .reduce((sum, c) => sum + c.droppedChecked, 0)
+    },
+  },
 
-function reset() {
-  file.value = null
-  parsing.value = false
-  error.value = ''
-  candidates.value = []
-  selected.value = new Set()
-}
+  methods: {
+    ofKind(kind) {
+      return this.candidates.filter((c) => c.kind === kind)
+    },
 
-async function parse(picked) {
-  if (!picked) return
-  parsing.value = true
-  error.value = ''
-  try {
-    const found = await candidatesFromZip(await picked.arrayBuffer())
-    candidates.value = found
-    // A checklist is what someone importing into a shopping app came for, so those start
-    // ticked. A text note only became a list by splitting it on newlines — that guess is
-    // the user's to confirm, and in an archive of any size most of them are not shopping.
-    // Unless they are all there is, in which case starting with nothing selected would be
-    // an empty dialog over a file the user picked on purpose.
-    const lists = found.filter((c) => c.kind === 'list')
-    selected.value = new Set((lists.length ? lists : found).map((c) => c.key))
-  } catch (err) {
-    // The archive is the user's to fix — a wrong export, or a file that is not one at all —
-    // so say which it was rather than a generic failure.
-    error.value = err.message || 'Could not read this archive.'
-    file.value = null
-  } finally {
-    parsing.value = false
-  }
-}
+    /** `null` is Quasar's indeterminate — the honest state when only some of a group is on. */
+    groupState(group) {
+      const on = group.candidates.filter((c) => this.selected.has(c.key)).length
+      if (!on) return false
+      return on === group.candidates.length ? true : null
+    },
 
-function toggle(candidate) {
-  const next = new Set(selected.value)
-  if (!next.delete(candidate.key)) next.add(candidate.key)
-  selected.value = next
-}
+    toggleGroup(group) {
+      const next = new Set(this.selected)
+      // Partly-on reads as "not all of it yet", so the useful move is to finish selecting it.
+      const turnOn = this.groupState(group) !== true
+      for (const c of group.candidates) {
+        if (turnOn) next.add(c.key)
+        else next.delete(c.key)
+      }
+      this.selected = next
+    },
 
-function confirm() {
-  const chosen = candidates.value.filter((c) => selected.value.has(c.key))
-  store.importLists(chosen)
-  open.value = false
-  // The lists exist locally the moment they are added, so this is already true offline;
-  // `sync` is what gets them to the server, whenever that becomes possible.
-  $q.notify({
-    type: 'positive',
-    message: `Imported ${chosen.length} list(s).`,
-  })
-  store.sync()
+    reset() {
+      this.file = null
+      this.parsing = false
+      this.error = ''
+      this.candidates = []
+      this.selected = new Set()
+    },
+
+    async parse(picked) {
+      if (!picked) return
+      this.parsing = true
+      this.error = ''
+      try {
+        const found = await candidatesFromZip(await picked.arrayBuffer())
+        this.candidates = found
+        // A checklist is what someone importing into a shopping app came for, so those start
+        // ticked. A text note only became a list by splitting it on newlines — that guess is
+        // the user's to confirm, and in an archive of any size most of them are not shopping.
+        // Unless they are all there is, in which case starting with nothing selected would be
+        // an empty dialog over a file the user picked on purpose.
+        const lists = found.filter((c) => c.kind === 'list')
+        this.selected = new Set((lists.length ? lists : found).map((c) => c.key))
+      } catch (err) {
+        // The archive is the user's to fix — a wrong export, or a file that is not one at all —
+        // so say which it was rather than a generic failure.
+        this.error = err.message || 'Could not read this archive.'
+        this.file = null
+      } finally {
+        this.parsing = false
+      }
+    },
+
+    toggle(candidate) {
+      const next = new Set(this.selected)
+      if (!next.delete(candidate.key)) next.add(candidate.key)
+      this.selected = next
+    },
+
+    confirm() {
+      const chosen = this.candidates.filter((c) => this.selected.has(c.key))
+      this.store.importLists(chosen)
+      this.open = false
+      // The lists exist locally the moment they are added, so this is already true offline;
+      // `sync` is what gets them to the server, whenever that becomes possible.
+      this.$q.notify({
+        type: 'positive',
+        message: `Imported ${chosen.length} list(s).`,
+      })
+      this.store.sync()
+    },
+  },
 }
 </script>
 

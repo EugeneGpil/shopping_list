@@ -1,4 +1,3 @@
-import { ref } from 'vue'
 import { Notify } from 'quasar'
 import { api, isNetworkError } from 'src/api'
 import { payloadOf, recordFromApi } from './record'
@@ -18,28 +17,28 @@ import { payloadOf, recordFromApi } from './record'
  * Conflicts: every PUT carries the version it was based on, and the server
  * answers 409 if another device has written since. The newer server copy wins and the
  * user is told — losing an edit silently is the one outcome worth interrupting for.
+ *
+ * Actions only, merged into the store in `index.js`; `syncing` is state there.
  */
-export function createSync({ lists, orderDirty, forget }) {
-  const syncing = ref(false)
-
+export default {
   /**
    * Take the server's copy of a list, keeping this record's local identity.
    *
    * Async because the copy may be ciphertext and `recordFromApi` is the seam that opens it
    * (§4). Every caller must await it, or the record is read before it has been replaced.
    */
-  async function adopt(record, data) {
+  async _adopt(record, data) {
     Object.assign(record, await recordFromApi(data), { id: record.id })
-  }
+  },
 
-  function reportConflict(record) {
+  _reportConflict(record) {
     Notify.create({
       type: 'warning',
       multiLine: true,
       timeout: 8000,
       message: `"${record.name}" was changed on another device, so that newer version was kept and your offline changes to it were discarded.`,
     })
-  }
+  },
 
   /**
    * Send one list: create it first if it only exists here, then PUT the whole document.
@@ -47,8 +46,8 @@ export function createSync({ lists, orderDirty, forget }) {
    * Returns what happened rather than throwing, because every caller wants to carry on:
    * 'saved' | 'conflict' | 'offline' | 'failed' | 'locked'.
    */
-  async function pushList(record) {
-    // A tombstoned list has nothing worth sending; `pushDelete` owns it from here.
+  async _pushList(record) {
+    // A tombstoned list has nothing worth sending; `_pushDelete` owns it from here.
     if (!record || record.pendingDelete) return 'saved'
     try {
       // Built once, before the create: the name goes out encrypted on both requests, and
@@ -83,54 +82,54 @@ export function createSync({ lists, orderDirty, forget }) {
       if (err.status === 409) {
         // The server sent the copy that won, so there is nothing more to ask it for.
         const winner = err.body?.data
-        if (winner) await adopt(record, winner)
+        if (winner) await this._adopt(record, winner)
         else record.dirty = false // cannot adopt without it; stop trying to push over it
-        reportConflict(record)
+        this._reportConflict(record)
         return 'conflict'
       }
       if (err.status === 404) {
         // Deleted elsewhere while we were holding an edit for it.
-        forget(record.id)
+        this._forget(record.id)
         return 'conflict'
       }
       // Offline: stay dirty and wait for the next trigger. A server error also stays
       // dirty — there is no reason to think the next attempt fails the same way.
       return isNetworkError(err) ? 'offline' : 'failed'
     }
-  }
+  },
 
   /** Send one tombstone. Drops the record locally once the server agrees — or already has. */
-  async function pushDelete(record) {
+  async _pushDelete(record) {
     if (!record) return 'saved'
     if (!record.serverId) {
-      forget(record.id) // never existed there; the tombstone is complete
+      this._forget(record.id) // never existed there; the tombstone is complete
       return 'saved'
     }
     try {
       await api.del(`shopping-list?list_id=${record.serverId}`)
-      forget(record.id)
+      this._forget(record.id)
       return 'saved'
     } catch (err) {
       if (err.status === 404) {
-        forget(record.id) // already gone, which is what we wanted
+        this._forget(record.id) // already gone, which is what we wanted
         return 'saved'
       }
       return isNetworkError(err) ? 'offline' : 'failed'
     }
-  }
+  },
 
-  async function pushOrder() {
+  async _pushOrder() {
     // Only lists the server knows about can be ordered; a temp list takes its place in the
     // order on the sync after the one that creates it.
-    const ids = lists.value.filter((l) => l.serverId && !l.pendingDelete).map((l) => l.serverId)
+    const ids = this.lists.filter((l) => l.serverId && !l.pendingDelete).map((l) => l.serverId)
     try {
       await api.put('shopping-lists/order', { ids })
-      orderDirty.value = false
+      this.orderDirty = false
       return 'saved'
     } catch (err) {
       return isNetworkError(err) ? 'offline' : 'failed'
     }
-  }
+  },
 
   /**
    * Flush everything pending, in the order the API needs: tombstones first so a deleted
@@ -140,24 +139,22 @@ export function createSync({ lists, orderDirty, forget }) {
    * Serialised: a second call while one is running is dropped, not queued, because the
    * running pass reads the records live and will pick up anything newer anyway.
    */
-  async function sync() {
-    if (syncing.value) return
-    syncing.value = true
+  async sync() {
+    if (this.syncing) return
+    this.syncing = true
     try {
-      for (const record of lists.value.filter((l) => l.pendingDelete)) {
-        if ((await pushDelete(record)) === 'offline') return
+      for (const record of this.lists.filter((l) => l.pendingDelete)) {
+        if ((await this._pushDelete(record)) === 'offline') return
       }
-      for (const record of lists.value.filter((l) => l.dirty || !l.serverId)) {
+      for (const record of this.lists.filter((l) => l.dirty || !l.serverId)) {
         // 'locked' stops the pass for the same reason 'offline' does: every remaining
         // encrypted list would refuse in exactly the same way, and the unlock is what
         // starts it again.
-        if (['offline', 'locked'].includes(await pushList(record))) return
+        if (['offline', 'locked'].includes(await this._pushList(record))) return
       }
-      if (orderDirty.value) await pushOrder()
+      if (this.orderDirty) await this._pushOrder()
     } finally {
-      syncing.value = false
+      this.syncing = false
     }
-  }
-
-  return { syncing, sync, pushList, pushDelete, pushOrder, adopt, reportConflict }
+  },
 }

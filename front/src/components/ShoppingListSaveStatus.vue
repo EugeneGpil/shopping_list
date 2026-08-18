@@ -10,11 +10,19 @@
   </div>
 </template>
 
-<script setup>
+<script>
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-// Read straight from the store, as the header does: the status has no input from the page.
-const store = useShoppingListsStore()
+export default {
+  name: 'ShoppingListSaveStatus',
+
+  computed: {
+    // Read straight from the store, as the header does: the status has no input from the page.
+    store() {
+      return useShoppingListsStore()
+    },
+  },
+}
 </script>
 
 <style scoped>

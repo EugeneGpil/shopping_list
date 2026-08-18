@@ -1,4 +1,3 @@
-import { computed, ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { api, isNetworkError } from 'src/api'
 import { deriveKek, generateDek, randomSalt, unwrapDek, wrapDek } from 'src/utils/crypto'
@@ -42,233 +41,229 @@ function writeCache(uid, keys) {
   }
 }
 
-export const useEncryptionStore = defineStore('encryption', () => {
-  const auth = useAuthStore()
-  const uid = () => auth.user?.uid
+export const useEncryptionStore = defineStore('encryption', {
+  state: () => ({
+    /** One row per registered passkey: `{ credential_id, hkdf_salt, wrapped_key, created_at }`. */
+    keys: readCache(useAuthStore().user?.uid),
+    /** Whether the question "is encryption on?" has been answered yet, from cache or server. */
+    ready: false,
+    /** Mirrors the module-level key, so the UI can react to it. */
+    unlocked: isUnlocked(),
+    busy: false,
+  }),
 
-  /** One row per registered passkey: `{ credential_id, hkdf_salt, wrapped_key, created_at }`. */
-  const keys = ref(readCache(uid()))
-  /** Whether the question "is encryption on?" has been answered yet, from cache or server. */
-  const ready = ref(false)
-  /** Mirrors the module-level key, so the UI can react to it. */
-  const unlocked = ref(isUnlocked())
-  const busy = ref(false)
+  getters: {
+    /** There is a key for this account. Says nothing about any particular list. */
+    enabled: (state) => state.keys.length > 0,
 
-  /** There is a key for this account. Says nothing about any particular list. */
-  const enabled = computed(() => keys.value.length > 0)
-  /**
-   * There is a key and this session has not opened it — so an encrypted list cannot be read
-   * yet. Nothing acts on this by itself: it is what the editor checks when it is asked for a
-   * list the server holds encrypted, and nowhere else.
-   */
-  const locked = computed(() => enabled.value && !unlocked.value)
+    /**
+     * There is a key and this session has not opened it — so an encrypted list cannot be read
+     * yet. Nothing acts on this by itself: it is what the editor checks when it is asked for a
+     * list the server holds encrypted, and nowhere else.
+     */
+    locked() {
+      return this.enabled && !this.unlocked
+    },
+  },
 
-  function remember(rows) {
-    keys.value = rows
-    writeCache(uid(), rows)
-  }
+  actions: {
+    _uid() {
+      return useAuthStore().user?.uid
+    },
 
-  /**
-   * Find out whether encryption is on. Called on boot, before anything tries to read a list.
-   *
-   * Falls back to the cache when the server cannot be reached, because "we could not ask" must
-   * not read as "encryption is off" — that would send the app straight into showing ciphertext
-   * as list names.
-   */
-  async function load() {
-    try {
-      const { data } = await api.get('encryption')
-      remember(data ?? [])
-    } catch (err) {
-      // 401 lands here too: nothing is known about this user yet, so the cache is all there is.
-      if (!isNetworkError(err) && err.status !== 401) throw err
-    } finally {
-      ready.value = true
-    }
-  }
+    _remember(rows) {
+      this.keys = rows
+      writeCache(this._uid(), rows)
+    },
 
-  /**
-   * The one refusal worth making before a passkey prompt rather than after it.
-   *
-   * Only the missing API is fatal. A device with no built-in authenticator is merely unusual —
-   * a USB security key satisfies WebAuthn too — so `hasPlatformAuthenticator` is left to the
-   * setup screen to warn about rather than checked here.
-   */
-  function assertPasskeySupport() {
-    if (!isPasskeySupported()) {
-      throw new Error('This browser cannot use passkeys, so it cannot encrypt your lists.')
-    }
-  }
-
-  /**
-   * Wrap the data key for one credential and store it. Shared by "create the key" and "add
-   * another passkey", because they differ only in where the DEK came from.
-   *
-   * **No label is sent.** The endpoint takes one and the column is there for a name the user
-   * types, but the app will not invent one: the only thing it could derive it from is the user
-   * agent, which says "Chrome on Android" for the installed Play Store build too — a wrong
-   * answer, stored on a server that cannot be shown to be wrong, in a row whose whole purpose
-   * is to be opaque. The date it was added is a truthful way to tell two apart.
-   */
-  async function registerKey(dek) {
-    const { credentialId, prf } = await registerPasskey({
-      userId: uid() ?? 'local',
-      userName: auth.user?.email ?? 'Shopping list',
-      displayName: auth.user?.displayName ?? auth.user?.email ?? 'Shopping list',
-    })
-
-    const hkdf_salt = randomSalt()
-    const kek = await deriveKek(prf, hkdf_salt)
-    const wrapped_key = await wrapDek(dek, kek)
-
-    await api.put('encryption', { credential_id: credentialId, hkdf_salt, wrapped_key })
-    await load()
-
-    return credentialId
-  }
-
-  /**
-   * Create the key: one new passkey, one new data key, one wrapped copy on the server.
-   *
-   * **It converts nothing.** Encryption is per list (§1), so setting the key up leaves every
-   * existing list exactly as it was and simply makes "encrypt this list" possible. That is
-   * what keeps this cheap enough to do before it is needed, rather than as a decision about
-   * the whole account.
-   *
-   * Needs a connection: a key this device holds but the server has no wrapped copy of would
-   * encrypt lists that nothing could ever open again.
-   */
-  async function createKey() {
-    if (enabled.value) throw new Error('This account already has an encryption key.')
-    busy.value = true
-    try {
-      assertPasskeySupport()
-
-      const dek = await generateDek()
-      await registerKey(dek)
-
-      // Only after the server has the wrapped copy — see above.
-      setDek(dek)
-      unlocked.value = true
-    } finally {
-      busy.value = false
-    }
-  }
-
-  /**
-   * Open the encrypted lists on this device: one fingerprint prompt, one unwrap, then catch up.
-   *
-   * Asked for when one is opened, not on boot — an account with a key and no encrypted list
-   * open has nothing to unlock *for*, and prompting anyway is the tax this design exists to
-   * avoid (§1).
-   *
-   * Works offline — the authenticator is local and the wrapped copy is cached. The wrong
-   * credential does not need detecting: its KEK fails at the GCM tag inside `unwrapDek`.
-   *
-   * **The catching up happens before `unlocked` flips, and the order is load-bearing.** The
-   * flag is what the editor watches to know it can open the list it was refused, and
-   * `fetchLists` rebuilds the collection wholesale — so a page that reacted to the flag first
-   * would race that rebuild and have its freshly fetched items replaced by an index entry that
-   * carries none. Flipping last means everything downstream sees a collection that has settled.
-   */
-  async function unlock() {
-    if (!enabled.value) return
-    busy.value = true
-    try {
-      const { credentialId, prf } = await passkeyPrf(keys.value.map((k) => k.credential_id))
-
-      // A resident-credential prompt can return a passkey this account has no wrapped copy
-      // for — another account's, on a shared device.
-      const row = keys.value.find((k) => k.credential_id === credentialId)
-      if (!row) throw new Error('That passkey is not registered for these lists.')
-
-      const kek = await deriveKek(prf, row.hkdf_salt)
-      setDek(await unwrapDek(row.wrapped_key, kek))
-
-      const lists = useShoppingListsStore()
+    /**
+     * Find out whether encryption is on. Called on boot, before anything tries to read a list.
+     *
+     * Falls back to the cache when the server cannot be reached, because "we could not ask" must
+     * not read as "encryption is off" — that would send the app straight into showing ciphertext
+     * as list names.
+     */
+    async load() {
       try {
-        // Edits to an encrypted list made before the key arrived were held back rather than
-        // written in the clear (`payloadOf`), and this is the trigger that knows they can go.
-        await lists.sync()
-        // Cheap, and it settles the collection before the editor reacts — see above.
-        await lists.fetchLists()
+        const { data } = await api.get('encryption')
+        this._remember(data ?? [])
       } catch (err) {
-        // Offline is not a failed unlock — the key is here and the cache is what the user is
-        // already looking at. Anything else is worth surfacing, but not by staying locked.
-        if (!isNetworkError(err)) throw err
+        // 401 lands here too: nothing is known about this user yet, so the cache is all there is.
+        if (!isNetworkError(err) && err.status !== 401) throw err
       } finally {
-        unlocked.value = true
+        this.ready = true
       }
-    } finally {
-      busy.value = false
-    }
-  }
+    },
 
-  /**
-   * Give a second passkey access to the same data key — §1's entire recovery story, and the
-   * only way to read these lists on a device the first passkey does not sync to.
-   *
-   * Requires this session to be unlocked, because the DEK being wrapped has to be the one
-   * every list is already encrypted under. The server cannot check that (§5), so it is checked
-   * here by construction: there is nothing else to wrap.
-   */
-  async function addPasskey() {
-    const dek = getDek()
-    if (!dek) throw new Error('Unlock first: adding a passkey needs the key it is copying.')
-    busy.value = true
-    try {
-      await registerKey(dek)
-    } finally {
-      busy.value = false
-    }
-  }
+    /**
+     * The one refusal worth making before a passkey prompt rather than after it.
+     *
+     * Only the missing API is fatal. A device with no built-in authenticator is merely unusual —
+     * a USB security key satisfies WebAuthn too — so `hasPlatformAuthenticator` is left to the
+     * setup screen to warn about rather than checked here.
+     */
+    _assertPasskeySupport() {
+      if (!isPasskeySupported()) {
+        throw new Error('This browser cannot use passkeys, so it cannot encrypt your lists.')
+      }
+    },
 
-  /**
-   * Remove a lost device's passkey. The server refuses the last one while any list is still
-   * encrypted (409), and allows it when none is.
-   *
-   * When that was the last one, the DEK has to go with it. It is unrecoverable from this moment
-   * — no wrapped copy exists anywhere — so keeping it in memory would let this session lock a
-   * list under a key that nothing, on any device including this one after a reload, could ever
-   * open again.
-   */
-  async function removePasskey(credentialId) {
-    await api.del(`encryption?credential_id=${encodeURIComponent(credentialId)}`)
-    await load()
+    /**
+     * Wrap the data key for one credential and store it. Shared by "create the key" and "add
+     * another passkey", because they differ only in where the DEK came from.
+     *
+     * **No label is sent.** The endpoint takes one and the column is there for a name the user
+     * types, but the app will not invent one: the only thing it could derive it from is the user
+     * agent, which says "Chrome on Android" for the installed Play Store build too — a wrong
+     * answer, stored on a server that cannot be shown to be wrong, in a row whose whole purpose
+     * is to be opaque. The date it was added is a truthful way to tell two apart.
+     */
+    async _registerKey(dek) {
+      const user = useAuthStore().user
+      const { credentialId, prf } = await registerPasskey({
+        userId: this._uid() ?? 'local',
+        userName: user?.email ?? 'Shopping list',
+        displayName: user?.displayName ?? user?.email ?? 'Shopping list',
+      })
 
-    if (!keys.value.length) {
+      const hkdf_salt = randomSalt()
+      const kek = await deriveKek(prf, hkdf_salt)
+      const wrapped_key = await wrapDek(dek, kek)
+
+      await api.put('encryption', { credential_id: credentialId, hkdf_salt, wrapped_key })
+      await this.load()
+
+      return credentialId
+    },
+
+    /**
+     * Create the key: one new passkey, one new data key, one wrapped copy on the server.
+     *
+     * **It converts nothing.** Encryption is per list (§1), so setting the key up leaves every
+     * existing list exactly as it was and simply makes "encrypt this list" possible. That is
+     * what keeps this cheap enough to do before it is needed, rather than as a decision about
+     * the whole account.
+     *
+     * Needs a connection: a key this device holds but the server has no wrapped copy of would
+     * encrypt lists that nothing could ever open again.
+     */
+    async createKey() {
+      if (this.enabled) throw new Error('This account already has an encryption key.')
+      this.busy = true
+      try {
+        this._assertPasskeySupport()
+
+        const dek = await generateDek()
+        await this._registerKey(dek)
+
+        // Only after the server has the wrapped copy — see above.
+        setDek(dek)
+        this.unlocked = true
+      } finally {
+        this.busy = false
+      }
+    },
+
+    /**
+     * Open the encrypted lists on this device: one fingerprint prompt, one unwrap, then catch up.
+     *
+     * Asked for when one is opened, not on boot — an account with a key and no encrypted list
+     * open has nothing to unlock *for*, and prompting anyway is the tax this design exists to
+     * avoid (§1).
+     *
+     * Works offline — the authenticator is local and the wrapped copy is cached. The wrong
+     * credential does not need detecting: its KEK fails at the GCM tag inside `unwrapDek`.
+     *
+     * **The catching up happens before `unlocked` flips, and the order is load-bearing.** The
+     * flag is what the editor watches to know it can open the list it was refused, and
+     * `fetchLists` rebuilds the collection wholesale — so a page that reacted to the flag first
+     * would race that rebuild and have its freshly fetched items replaced by an index entry that
+     * carries none. Flipping last means everything downstream sees a collection that has settled.
+     */
+    async unlock() {
+      if (!this.enabled) return
+      this.busy = true
+      try {
+        const { credentialId, prf } = await passkeyPrf(this.keys.map((k) => k.credential_id))
+
+        // A resident-credential prompt can return a passkey this account has no wrapped copy
+        // for — another account's, on a shared device.
+        const row = this.keys.find((k) => k.credential_id === credentialId)
+        if (!row) throw new Error('That passkey is not registered for these lists.')
+
+        const kek = await deriveKek(prf, row.hkdf_salt)
+        setDek(await unwrapDek(row.wrapped_key, kek))
+
+        const lists = useShoppingListsStore()
+        try {
+          // Edits to an encrypted list made before the key arrived were held back rather than
+          // written in the clear (`payloadOf`), and this is the trigger that knows they can go.
+          await lists.sync()
+          // Cheap, and it settles the collection before the editor reacts — see above.
+          await lists.fetchLists()
+        } catch (err) {
+          // Offline is not a failed unlock — the key is here and the cache is what the user is
+          // already looking at. Anything else is worth surfacing, but not by staying locked.
+          if (!isNetworkError(err)) throw err
+        } finally {
+          this.unlocked = true
+        }
+      } finally {
+        this.busy = false
+      }
+    },
+
+    /**
+     * Give a second passkey access to the same data key — §1's entire recovery story, and the
+     * only way to read these lists on a device the first passkey does not sync to.
+     *
+     * Requires this session to be unlocked, because the DEK being wrapped has to be the one
+     * every list is already encrypted under. The server cannot check that (§5), so it is checked
+     * here by construction: there is nothing else to wrap.
+     */
+    async addPasskey() {
+      const dek = getDek()
+      if (!dek) throw new Error('Unlock first: adding a passkey needs the key it is copying.')
+      this.busy = true
+      try {
+        await this._registerKey(dek)
+      } finally {
+        this.busy = false
+      }
+    },
+
+    /**
+     * Remove a lost device's passkey. The server refuses the last one while any list is still
+     * encrypted (409), and allows it when none is.
+     *
+     * When that was the last one, the DEK has to go with it. It is unrecoverable from this moment
+     * — no wrapped copy exists anywhere — so keeping it in memory would let this session lock a
+     * list under a key that nothing, on any device including this one after a reload, could ever
+     * open again.
+     */
+    async removePasskey(credentialId) {
+      await api.del(`encryption?credential_id=${encodeURIComponent(credentialId)}`)
+      await this.load()
+
+      if (!this.keys.length) {
+        clearDek()
+        this.unlocked = false
+      }
+    },
+
+    /** On logout: the key, the cached blobs and the flags all belong to the account leaving. */
+    reset() {
       clearDek()
-      unlocked.value = false
-    }
-  }
-
-  /** On logout: the key, the cached blobs and the flags all belong to the account leaving. */
-  function reset() {
-    clearDek()
-    unlocked.value = false
-    keys.value = []
-    ready.value = false
-    try {
-      localStorage.removeItem(cacheKeyFor(uid()))
-    } catch {
-      // See `writeCache`.
-    }
-  }
-
-  return {
-    keys,
-    ready,
-    busy,
-    enabled,
-    locked,
-    unlocked,
-    load,
-    createKey,
-    unlock,
-    addPasskey,
-    removePasskey,
-    reset,
-  }
+      this.unlocked = false
+      this.keys = []
+      this.ready = false
+      try {
+        localStorage.removeItem(cacheKeyFor(this._uid()))
+      } catch {
+        // See `writeCache`.
+      }
+    },
+  },
 })
 
 if (import.meta.hot) {

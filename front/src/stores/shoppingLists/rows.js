@@ -1,14 +1,6 @@
 import { createRow } from './record'
 
 /**
- * Every change to the open list's rows. Components call these by row index — they hold
- * no row objects of their own, so there is no way to edit a row without going through
- * an action that keeps history and the save in step.
- *
- * The insert helpers return the new row's key so the caller can move focus to it —
- * focus is a DOM concern and stays in the page.
- */
-/**
  * Group digits in threes with `_`, which is the separator the total already reads back:
  * 1000000 becomes "1_000_000". The sign sits outside the grouping, so -1000000 becomes
  * "-1_000_000" and stays a number to `numericTotal`.
@@ -18,10 +10,18 @@ export function withSeparators(n) {
   return sign + String(Math.abs(n)).replace(/\B(?=(\d{3})+$)/g, '_')
 }
 
-export function createRows({ current, record, scheduleSave, markDirty, numericTotal }) {
-  /** The open list's rows, or null when nothing is open or nothing is loaded yet. */
-  const rows = () => current.value?.items ?? null
-  const rowAt = (index) => rows()?.[index] ?? null
+/**
+ * Every change to the open list's rows. Components call these by row index — they hold
+ * no row objects of their own, so there is no way to edit a row without going through
+ * an action that keeps history and the save in step.
+ *
+ * The insert helpers return the new row's key so the caller can move focus to it —
+ * focus is a DOM concern and stays in the page.
+ */
+export default {
+  _rowAt(index) {
+    return this._rowList()?.[index] ?? null
+  },
 
   // ---- editing a row ----
   //
@@ -34,37 +34,37 @@ export function createRows({ current, record, scheduleSave, markDirty, numericTo
   // localStorage, so a phone killed before the blur keeps the text — and without the flag
   // the next launch would hold text it never intends to push.
 
-  function setName(index, value) {
-    const row = rowAt(index)
+  setName(index, value) {
+    const row = this._rowAt(index)
     if (!row) return
     row.name = value ?? ''
-    markDirty()
-  }
+    this._markDirty()
+  },
 
   /**
    * Quantities are positive integers, or "" for none. Returns the stored string so the
    * caller can put a sanitized value back into the DOM when the model did not change.
    */
-  function setQuantity(index, value) {
-    const row = rowAt(index)
+  setQuantity(index, value) {
+    const row = this._rowAt(index)
     const digits = String(value ?? '')
       .replace(/[^0-9]/g, '')
       .replace(/^0+/, '')
     if (row) {
       row.quantity = digits
-      markDirty()
+      this._markDirty()
     }
     return digits
-  }
+  },
 
   // Checking a box is a complete edit on its own — no blur to wait for.
-  function toggleChecked(index, value) {
-    const row = rowAt(index)
+  toggleChecked(index, value) {
+    const row = this._rowAt(index)
     if (!row) return
-    record()
+    this._record()
     row.checked = !!value
-    scheduleSave()
-  }
+    this._scheduleSave()
+  },
 
   // ---- adding and removing ----
 
@@ -72,28 +72,33 @@ export function createRows({ current, record, scheduleSave, markDirty, numericTo
    * Keep at least one (empty) row so there is always somewhere to start typing.
    * Returns the new row's key if one was added, else null.
    */
-  function ensureRow() {
-    const list = rows()
+  _ensureRow() {
+    const list = this._rowList()
     if (!list || list.length) return null
     const row = createRow()
     list.push(row)
-    scheduleSave()
+    this._scheduleSave()
     return row._key
-  }
+  },
 
   /** Returns the new row's key so the caller can move focus to it. */
-  function insertRow(index) {
-    const list = rows()
+  _insertRow(index) {
+    const list = this._rowList()
     if (!list) return null
-    record()
+    this._record()
     const row = createRow()
     list.splice(index, 0, row)
-    scheduleSave()
+    this._scheduleSave()
     return row._key
-  }
+  },
 
-  const addRow = () => insertRow(rows()?.length ?? 0)
-  const addRowAfter = (index) => insertRow(index + 1)
+  addRow() {
+    return this._insertRow(this._rowList()?.length ?? 0)
+  },
+
+  addRowAfter(index) {
+    return this._insertRow(index + 1)
+  },
 
   /**
    * Break a row in two at the caret, the way Enter breaks a line in any editor: what sits
@@ -110,21 +115,21 @@ export function createRows({ current, record, scheduleSave, markDirty, numericTo
    *
    * Returns the new row's key so the caller can move the caret into it.
    */
-  function splitRow(index, start, end) {
-    const list = rows()
-    const row = rowAt(index)
+  splitRow(index, start, end) {
+    const list = this._rowList()
+    const row = this._rowAt(index)
     if (!row) return null
     const text = row.name ?? ''
     const at = (n) => (n == null ? text.length : Math.max(0, Math.min(n, text.length)))
     const from = at(start)
     const to = at(end ?? start)
-    record()
+    this._record()
     row.name = text.slice(0, Math.min(from, to))
     const next = createRow({ name: text.slice(Math.max(from, to)) })
     list.splice(index + 1, 0, next)
-    scheduleSave()
+    this._scheduleSave()
     return next._key
-  }
+  },
 
   /**
    * The inverse of `splitRow`: take a row up into the one above it, the way Backspace at
@@ -138,18 +143,18 @@ export function createRows({ current, record, scheduleSave, markDirty, numericTo
    * Returns the row above's key and the offset the join landed at, so the caller can put
    * the caret on the seam; null when there is no row above to join.
    */
-  function mergeRowUp(index) {
-    const list = rows()
-    const row = rowAt(index)
-    const above = rowAt(index - 1)
+  mergeRowUp(index) {
+    const list = this._rowList()
+    const row = this._rowAt(index)
+    const above = this._rowAt(index - 1)
     if (!list || !row || !above) return null
-    record()
+    this._record()
     const caret = (above.name ?? '').length
     above.name = (above.name ?? '') + (row.name ?? '')
     list.splice(index, 1)
-    scheduleSave()
+    this._scheduleSave()
     return { key: above._key, caret }
-  }
+  },
 
   /**
    * Collapse a list that has been added up into its answer: every row goes, one row with
@@ -163,45 +168,31 @@ export function createRows({ current, record, scheduleSave, markDirty, numericTo
    *
    * Returns the new row's key, or null when there was no total to squash to.
    */
-  function squashRows() {
-    const list = rows()
-    const total = numericTotal?.value ?? null
+  squashRows() {
+    const list = this._rowList()
+    const total = this.numericTotal
     if (!list || total === null) return null
-    record()
+    this._record()
     const row = createRow({ name: withSeparators(total) })
     list.splice(0, list.length, row)
-    scheduleSave()
+    this._scheduleSave()
     return row._key
-  }
+  },
 
-  function removeRow(index) {
-    const list = rows()
+  removeRow(index) {
+    const list = this._rowList()
     if (!list || !list[index]) return
-    record()
+    this._record()
     list.splice(index, 1)
-    ensureRow()
-    scheduleSave()
-  }
+    this._ensureRow()
+    this._scheduleSave()
+  },
 
   /**
    * Take a reordered array from the drag handle. The snapshot for undo is taken by
    * `beginDrag` and committed by `endDrag`, so this only swaps the array in.
    */
-  function reorder(ordered) {
-    if (current.value) current.value.items = ordered
-  }
-
-  return {
-    ensureRow,
-    setName,
-    setQuantity,
-    toggleChecked,
-    addRow,
-    addRowAfter,
-    splitRow,
-    mergeRowUp,
-    squashRows,
-    removeRow,
-    reorder,
-  }
+  reorder(ordered) {
+    if (this.current) this.current.items = ordered
+  },
 }

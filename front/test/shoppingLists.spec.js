@@ -211,6 +211,66 @@ async function openWith(names) {
 }
 const names = (store) => store.items.map((i) => i.name)
 
+/**
+ * The per-store scratch that is not state: the debounce timers, the undo snapshots taken
+ * between focus and blur, and the title as it was before an edit.
+ *
+ * It lives in a `WeakMap` keyed by the store, so these tests are about the key being the
+ * *same* key every time. Nothing else in this file would notice if it were not: a snapshot
+ * that quietly goes missing shows up as an edit that cannot be undone, never as an error.
+ */
+describe('the scratch that is not state', () => {
+  it('makes an edit committed on blur one undo step', async () => {
+    const store = await openWith(['Milk'])
+
+    editRow(store, 0, 'Oat milk')
+
+    expect(store.canUndo).toBe(true)
+    store.undo()
+    expect(names(store)).toEqual(['Milk'])
+  })
+
+  it('reverts a title emptied by the user to the one it had', async () => {
+    const store = await openWith(['Milk'])
+
+    store.beginNameEdit()
+    store.setListName('   ')
+    await store.saveName()
+
+    expect(store.listName).toBe('Groceries')
+  })
+
+  it('trims a title and keeps it', async () => {
+    const store = await openWith(['Milk'])
+
+    store.beginNameEdit()
+    store.setListName('  Weekly shop  ')
+    await store.saveName()
+
+    expect(store.listName).toBe('Weekly shop')
+  })
+
+  /**
+   * In development Pinia's devtools hook replaces every action with one that builds a fresh
+   * `Proxy` over the store and calls the real action with that as `this` — so `this` is never
+   * the same object twice. Keying the scratch on `this` therefore worked under these tests and
+   * in a production build, and broke every one of the behaviours above the moment the app was
+   * opened in `quasar dev`. `privates` resolves the key with `toRaw`, which sees through that
+   * proxy; this is the test that says so, because no other one can.
+   */
+  it('is one scratch per store even when actions arrive through a proxy, as devtools calls them', async () => {
+    const store = await openWith(['Milk'])
+    const asDevtoolsWould = (action, ...args) => action.apply(new Proxy(store, {}), args)
+
+    asDevtoolsWould(store.beginEdit)
+    asDevtoolsWould(store.setName, 0, 'Oat milk')
+    asDevtoolsWould(store.endEdit)
+
+    expect(names(store)).toEqual(['Oat milk'])
+    expect(store.canUndo).toBe(true)
+  })
+})
+
 // What Enter does in the name field when there is no quantity column to move to. The
 // caret positions are what `ShoppingListRow` reads off the textarea.
 describe('splitting a row at the caret', () => {

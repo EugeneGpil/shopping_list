@@ -4,7 +4,7 @@
          room to wrap readably, the toolbar drops to its own line and the title gets the
          full width — rather than being squeezed into a sliver with empty space beside it. -->
     <div class="row items-start no-wrap title-group">
-      <q-btn flat round dense icon="arrow_back" class="header-btn" @click="emit('back')" />
+      <q-btn flat round dense icon="arrow_back" class="header-btn" @click="$emit('back')" />
       <q-input
         ref="titleInput"
         :model-value="store.listName"
@@ -30,7 +30,7 @@
         icon="search"
         class="header-btn"
         :color="searching ? 'primary' : 'grey'"
-        @click="emit('toggle-search')"
+        @click="$emit('toggle-search')"
       >
         <q-tooltip>{{ searching ? 'Close search' : 'Search' }}</q-tooltip>
       </q-btn>
@@ -66,7 +66,7 @@
         class="header-btn"
         :color="encrypted ? 'primary' : 'grey'"
         :loading="lockBusy"
-        @click="emit('toggle-lock')"
+        @click="$emit('toggle-lock')"
       >
         <q-tooltip>{{ encrypted ? 'Stop encrypting this list' : 'Encrypt this list' }}</q-tooltip>
       </q-btn>
@@ -96,46 +96,59 @@
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+<script>
+import { nextTick } from 'vue'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-defineProps({
-  // Whether the page currently has the search field open. Only lights the button — the
-  // field, the text in it and the filtering all belong to the page.
-  searching: { type: Boolean, default: false },
-  // Whether this list is encrypted, and whether that is being changed right now. Passed in
-  // rather than read from the store: the page owns the flow behind it, which can involve a
-  // fingerprint prompt and a key that does not exist yet.
-  encrypted: { type: Boolean, default: false },
-  lockBusy: { type: Boolean, default: false },
-})
+export default {
+  name: 'ShoppingListHeader',
 
-// Navigation stays with the page — it owns the router and the flush-before-leave — and so
-// do the search field and the lock, so all three of these are the page's to act on.
-const emit = defineEmits(['back', 'toggle-search', 'toggle-lock'])
+  props: {
+    // Whether the page currently has the search field open. Only lights the button — the
+    // field, the text in it and the filtering all belong to the page.
+    searching: { type: Boolean, default: false },
+    // Whether this list is encrypted, and whether that is being changed right now. Passed in
+    // rather than read from the store: the page owns the flow behind it, which can involve a
+    // fingerprint prompt and a key that does not exist yet.
+    encrypted: { type: Boolean, default: false },
+    lockBusy: { type: Boolean, default: false },
+  },
 
-const store = useShoppingListsStore()
+  // Navigation stays with the page — it owns the router and the flush-before-leave — and so
+  // do the search field and the lock, so all three of these are the page's to act on.
+  emits: ['back', 'toggle-search', 'toggle-lock'],
 
-const titleInput = ref(null)
+  computed: {
+    store() {
+      return useShoppingListsStore()
+    },
+  },
 
-// Enter in the title just commits it — blurring fires `change`, which saves.
-// It never inserts a newline, even though `autogrow` makes this a textarea.
-function onTitleEnter(e) {
-  e.target.blur()
+  mounted() {
+    window.addEventListener('resize', this.regrowTitle)
+  },
+
+  beforeUnmount() {
+    window.removeEventListener('resize', this.regrowTitle)
+  },
+
+  methods: {
+    // Enter in the title just commits it — blurring fires `change`, which saves.
+    // It never inserts a newline, even though `autogrow` makes this a textarea.
+    onTitleEnter(e) {
+      e.target.blur()
+    },
+
+    // Same caveat as the item rows: Quasar's `autogrow` re-measures on input only, so a
+    // width change (rotation, a wider window) leaves a wrapped title clipped at its old
+    // height. A native input event runs Quasar's measurement without emitting an update.
+    regrowTitle() {
+      nextTick(() => {
+        this.$refs.titleInput?.nativeEl?.dispatchEvent(new Event('input'))
+      })
+    },
+  },
 }
-
-// Same caveat as the item rows: Quasar's `autogrow` re-measures on input only, so a
-// width change (rotation, a wider window) leaves a wrapped title clipped at its old
-// height. A native input event runs Quasar's measurement without emitting an update.
-function regrowTitle() {
-  nextTick(() => {
-    titleInput.value?.nativeEl?.dispatchEvent(new Event('input'))
-  })
-}
-
-onMounted(() => window.addEventListener('resize', regrowTitle))
-onBeforeUnmount(() => window.removeEventListener('resize', regrowTitle))
 </script>
 
 <style scoped>

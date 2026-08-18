@@ -100,9 +100,7 @@
   </q-dialog>
 </template>
 
-<script setup>
-import { computed, onMounted, ref } from 'vue'
-import { useQuasar } from 'quasar'
+<script>
 import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { hasPlatformAuthenticator } from 'src/utils/passkey'
@@ -118,140 +116,163 @@ import { hasPlatformAuthenticator } from 'src/utils/passkey'
  * to unlock the lists that are locked, one at a time, and the last remaining passkey is
  * refused by the server precisely so that stays possible.
  */
+export default {
+  name: 'EncryptionDialog',
 
-const props = defineProps({ modelValue: Boolean })
-const emit = defineEmits(['update:modelValue'])
+  props: { modelValue: Boolean },
 
-const $q = useQuasar()
-const encryption = useEncryptionStore()
-const lists = useShoppingListsStore()
+  emits: ['update:modelValue'],
 
-const error = ref('')
-const platformAuthenticator = ref(true)
+  data() {
+    return { error: '', platformAuthenticator: true }
+  },
 
-const open = computed({
-  get: () => props.modelValue,
-  set: (value) => emit('update:modelValue', value),
-})
+  computed: {
+    encryption() {
+      return useEncryptionStore()
+    },
 
-/**
- * Locked lists, and whether this key is the only way into them.
- *
- * The server enforces the same rule and is the one that matters; this is only here so the
- * button says what it will do before it is pressed. With nothing locked, the last passkey is
- * removable — a key that opens nothing is not protecting anything.
- */
-const lockedCount = computed(() => lists.visibleLists.filter((l) => l.encrypted).length)
-const lastOne = computed(() => encryption.keys.length < 2 && lockedCount.value > 0)
+    lists() {
+      return useShoppingListsStore()
+    },
 
-const addedOn = (key) =>
-  key.created_at ? new Date(key.created_at).toLocaleDateString() : 'this device'
+    open: {
+      get() {
+        return this.modelValue
+      },
+      set(value) {
+        this.$emit('update:modelValue', value)
+      },
+    },
 
-onMounted(async () => {
-  platformAuthenticator.value = await hasPlatformAuthenticator()
-})
+    /**
+     * Locked lists, and whether this key is the only way into them.
+     *
+     * The server enforces the same rule and is the one that matters; this is only here so the
+     * button says what it will do before it is pressed. With nothing locked, the last passkey is
+     * removable — a key that opens nothing is not protecting anything.
+     */
+    lockedCount() {
+      return this.lists.visibleLists.filter((l) => l.encrypted).length
+    },
 
-/**
- * Every action here ends the same way: something to say, and it is always said.
- *
- * Including the cancelled-prompt case, which used to be swallowed as "they changed their mind".
- * The platform cannot tell that apart from "this device has no usable passkey" (see
- * `PasskeyCancelledError`), so staying quiet turned a real failure into a button that visibly
- * does nothing.
- */
-function report(err, fallback) {
-  error.value = err.message ?? fallback
-}
+    lastOne() {
+      return this.encryption.keys.length < 2 && this.lockedCount > 0
+    },
+  },
 
-async function create() {
-  error.value = ''
-  try {
-    await encryption.createKey()
-    $q.notify({
-      type: 'positive',
-      message: 'Key created. Open a list and press the lock to encrypt it.',
-    })
-  } catch (err) {
-    report(err, 'Could not create the key.')
-  }
-}
+  async mounted() {
+    this.platformAuthenticator = await hasPlatformAuthenticator()
+  },
 
-/**
- * Add a second passkey, unlocking first if this session is not holding the key.
- *
- * The unlock is not optional and cannot be skipped: the new passkey has to wrap *the same* data
- * key, so it has to be in hand. Nothing unlocks at boot any more (§1), so on most visits this is
- * two prompts in a row — one to open the key, one to create the credential. Doing it here rather
- * than telling the user to go and open a locked list first is the difference between a working
- * button and the dead end this was.
- */
-async function addPasskey() {
-  error.value = ''
-  try {
-    if (!encryption.unlocked) await encryption.unlock()
-    await encryption.addPasskey()
-    $q.notify({ type: 'positive', message: 'Passkey added.' })
-  } catch (err) {
-    report(err, 'Could not add that passkey.')
-  }
-}
+  methods: {
+    addedOn(key) {
+      return key.created_at ? new Date(key.created_at).toLocaleDateString() : 'this device'
+    },
 
-/**
- * What removing this passkey actually costs, which is three different things.
- *
- * Worth the branch: the button is reachable in all three situations, and one sentence covering
- * them all ends up describing locked lists to someone who has none — true of nothing, and
- * alarming for no reason.
- *
- * No device name in any of them, because the app has none worth quoting — see `createKey`.
- */
-function removalWarning() {
-  if (encryption.keys.length < 2) {
-    return (
-      'This is the only passkey, so removing it leaves the account with no encryption key. ' +
-      'Nothing is locked, so nothing becomes unreadable — but setting encryption up again ' +
-      'later creates a different key.'
-    )
-  }
-  if (lockedCount.value) {
-    return (
-      `This passkey will no longer open your ${lockedCount.value} locked list(s). Your other ` +
-      'passkeys still will, and the lists themselves are untouched.'
-    )
-  }
+    /**
+     * Every action here ends the same way: something to say, and it is always said.
+     *
+     * Including the cancelled-prompt case, which used to be swallowed as "they changed their mind".
+     * The platform cannot tell that apart from "this device has no usable passkey" (see
+     * `PasskeyCancelledError`), so staying quiet turned a real failure into a button that visibly
+     * does nothing.
+     */
+    report(err, fallback) {
+      this.error = err.message ?? fallback
+    },
 
-  return 'This passkey will no longer be usable for lists you lock later. Your other passkeys will.'
-}
+    async create() {
+      this.error = ''
+      try {
+        await this.encryption.createKey()
+        this.$q.notify({
+          type: 'positive',
+          message: 'Key created. Open a list and press the lock to encrypt it.',
+        })
+      } catch (err) {
+        this.report(err, 'Could not create the key.')
+      }
+    },
 
-function remove(key) {
-  // Answered on the tap rather than by grey-ing the button out: a disabled control explains
-  // nothing, and this is the one refusal in the app that a user is entitled to a reason for.
-  if (lastOne.value) {
-    $q.dialog({
-      title: 'This passkey cannot be removed',
-      message:
-        `It is the only one that can open your ${lockedCount.value} locked list(s), and ` +
-        'removing it would leave them unopenable for good. Add a second passkey, or unlock ' +
-        'those lists first.',
-      ok: { label: 'OK', flat: true, noCaps: true },
-    })
+    /**
+     * Add a second passkey, unlocking first if this session is not holding the key.
+     *
+     * The unlock is not optional and cannot be skipped: the new passkey has to wrap *the same* data
+     * key, so it has to be in hand. Nothing unlocks at boot any more (§1), so on most visits this is
+     * two prompts in a row — one to open the key, one to create the credential. Doing it here rather
+     * than telling the user to go and open a locked list first is the difference between a working
+     * button and the dead end this was.
+     */
+    async addPasskey() {
+      this.error = ''
+      try {
+        if (!this.encryption.unlocked) await this.encryption.unlock()
+        await this.encryption.addPasskey()
+        this.$q.notify({ type: 'positive', message: 'Passkey added.' })
+      } catch (err) {
+        this.report(err, 'Could not add that passkey.')
+      }
+    },
 
-    return
-  }
+    /**
+     * What removing this passkey actually costs, which is three different things.
+     *
+     * Worth the branch: the button is reachable in all three situations, and one sentence covering
+     * them all ends up describing locked lists to someone who has none — true of nothing, and
+     * alarming for no reason.
+     *
+     * No device name in any of them, because the app has none worth quoting — see `createKey`.
+     */
+    removalWarning() {
+      if (this.encryption.keys.length < 2) {
+        return (
+          'This is the only passkey, so removing it leaves the account with no encryption key. ' +
+          'Nothing is locked, so nothing becomes unreadable — but setting encryption up again ' +
+          'later creates a different key.'
+        )
+      }
+      if (this.lockedCount) {
+        return (
+          `This passkey will no longer open your ${this.lockedCount} locked list(s). Your other ` +
+          'passkeys still will, and the lists themselves are untouched.'
+        )
+      }
 
-  $q.dialog({
-    title: 'Remove passkey',
-    message: removalWarning(),
-    cancel: true,
-    ok: { label: 'Remove', color: 'negative' },
-  }).onOk(async () => {
-    error.value = ''
-    try {
-      await encryption.removePasskey(key.credential_id)
-    } catch (err) {
-      // 409 is the server refusing to leave this account with no way in at all.
-      error.value = err.body?.message ?? 'Could not remove that passkey.'
-    }
-  })
+      return 'This passkey will no longer be usable for lists you lock later. Your other passkeys will.'
+    },
+
+    remove(key) {
+      // Answered on the tap rather than by grey-ing the button out: a disabled control explains
+      // nothing, and this is the one refusal in the app that a user is entitled to a reason for.
+      if (this.lastOne) {
+        this.$q.dialog({
+          title: 'This passkey cannot be removed',
+          message:
+            `It is the only one that can open your ${this.lockedCount} locked list(s), and ` +
+            'removing it would leave them unopenable for good. Add a second passkey, or unlock ' +
+            'those lists first.',
+          ok: { label: 'OK', flat: true, noCaps: true },
+        })
+
+        return
+      }
+
+      this.$q.dialog({
+        title: 'Remove passkey',
+        message: this.removalWarning(),
+        cancel: true,
+        ok: { label: 'Remove', color: 'negative' },
+      }).onOk(async () => {
+        this.error = ''
+        try {
+          await this.encryption.removePasskey(key.credential_id)
+        } catch (err) {
+          // 409 is the server refusing to leave this account with no way in at all.
+          this.error = err.body?.message ?? 'Could not remove that passkey.'
+        }
+      })
+    },
+  },
 }
 </script>

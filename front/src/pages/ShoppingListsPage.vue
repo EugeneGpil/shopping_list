@@ -148,167 +148,188 @@
   </q-page>
 </template>
 
-<script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useQuasar } from 'quasar'
+<script>
 import draggable from 'vuedraggable'
 import { isNetworkError } from 'src/api'
 import EncryptionDialog from 'src/components/EncryptionDialog.vue'
 import ImportFromKeepDialog from 'src/components/ImportFromKeepDialog.vue'
 import InstallHint from 'src/components/InstallHint.vue'
 import StaleDataNotice from 'src/components/StaleDataNotice.vue'
-import { useRetryWhenOnline } from 'src/composables/useRetryWhenOnline'
+import retryWhenOnline from 'src/mixins/retryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
 import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 
-const router = useRouter()
-const $q = useQuasar()
-const authStore = useAuthStore()
-const encryption = useEncryptionStore()
-const store = useShoppingListsStore()
+export default {
+  name: 'ShoppingListsPage',
 
-const newName = ref('')
-const importing = ref(false)
-const encrypting = ref(false)
-const loading = ref(false)
-const creating = ref(false)
-const loadFailed = ref(false)
+  components: { draggable, EncryptionDialog, ImportFromKeepDialog, InstallHint, StaleDataNotice },
 
-async function load() {
-  loading.value = true
-  loadFailed.value = false
-  try {
-    await store.fetchLists()
-  } catch (err) {
-    // No encryption case to handle here, and that is the design rather than an omission: the
-    // index is titles and counts, both plaintext however a list is stored (§1), so this page
-    // never needs a key and never has to explain itself.
-    //
-    // Offline with lists already in the store: keep showing them. They are the same
-    // records the editor works on, so at worst they are a little stale — while an empty
-    // page would suggest the lists are gone.
-    if (!isNetworkError(err) || !store.visibleLists.length) loadFailed.value = true
-  } finally {
-    loading.value = false
-  }
-}
+  mixins: [retryWhenOnline],
 
-async function create() {
-  const name = newName.value.trim()
-  if (!name || creating.value) return
-  creating.value = true
-  try {
-    // Succeeds offline too — the list is created locally and pushed later — so the only
-    // way here is a refusal from the server, e.g. a name it will not accept.
-    const list = await store.createList(name)
-    newName.value = ''
-    router.push(`/list/${list.id}`)
-  } catch {
-    // Nothing was created, so there is nothing to undo — keep the typed name so the
-    // button can simply be pressed again.
-    $q.notify({ type: 'negative', message: 'Could not create the list.' })
-  } finally {
-    creating.value = false
-  }
-}
-
-function open(id) {
-  router.push(`/list/${id}`)
-}
-
-function remove(list) {
-  $q.dialog({
-    title: 'Delete list',
-    message: `Delete "${list.name}"? This cannot be undone.`,
-    cancel: true,
-    ok: { label: 'Delete', color: 'negative' },
-  }).onOk(async () => {
-    // The row goes immediately either way; offline the deletion is queued, which needs no
-    // announcement. Only the server actively refusing is worth a word.
-    if ((await store.deleteList(list.id)) === 'failed') {
-      $q.notify({ type: 'negative', message: 'Could not delete the list.' })
+  data() {
+    return {
+      newName: '',
+      importing: false,
+      encrypting: false,
+      loading: false,
+      creating: false,
+      loadFailed: false,
     }
-  })
-}
+  },
 
-// Only worth a retry if the last attempt actually failed — a successful index does not
-// need refetching just because the connection blinked. `stale` is part of that: falling
-// back to the cached lists leaves `loadFailed` false, and without this the notice saying
-// they are unconfirmed would still be true and never get a chance to stop being true.
-useRetryWhenOnline(() => {
-  if (loadFailed.value || store.stale) load()
-})
+  computed: {
+    authStore() {
+      return useAuthStore()
+    },
 
-/**
- * What both ways of leaving have to do on this device, and **before the session ends**.
- *
- * The lists outlive this page, so they have to go explicitly — otherwise the next person to
- * sign in sees them until their own fetch lands. The same for the key: leaving it in memory
- * would let the next account's ciphertext be "decrypted" with somebody else's DEK, which
- * fails in the least obvious way possible.
- *
- * The ordering is the part that is easy to get wrong, because getting it wrong is silent.
- * Both caches are keyed by `authStore.user.uid`, and `logout` clears that — so called
- * afterwards, these two clear the key for `anon` and leave the real ones sitting on the
- * device. That is what this used to do.
- */
-function clearLocalState() {
-  store.clear()
-  encryption.reset()
-}
+    encryption() {
+      return useEncryptionStore()
+    },
 
-async function onLogout() {
-  clearLocalState()
-  await authStore.logout()
-  router.push('/login')
-}
+    store() {
+      return useShoppingListsStore()
+    },
+  },
 
-/**
- * The one action in the app with no undo and no server-side copy to recover from — Play's
- * User Data policy requires it to be reachable from inside the app, and the privacy policy
- * describes exactly what it removes.
- *
- * `persistent` because a tap outside the dialog is not consent, and the button says what it
- * does rather than "OK" — this menu entry sits one row below "Log out", and the two must not
- * be confusable at the moment of confirming.
- */
-function onDeleteAccount() {
-  $q.dialog({
-    title: 'Delete account',
-    message:
-      'This deletes your account, every list on it, and the keys to your locked lists. ' +
-      'Nobody can undo it or recover the contents afterwards — not even the developer, ' +
-      'because the server never had the keys.',
-    cancel: true,
-    persistent: true,
-    ok: { label: 'Delete everything', color: 'negative' },
-  }).onOk(async () => {
-    try {
-      await authStore.deleteAccount()
-    } catch (err) {
-      // Nothing local has been touched, so the session is still usable and the only thing
-      // to do is say so. Unlike a list edit this cannot be queued for later: a deletion
-      // that happens whenever the connection returns is not something to leave armed.
-      $q.notify({
-        type: 'negative',
-        message: isNetworkError(err)
-          ? 'You need to be online to delete your account.'
-          : 'Could not delete your account.',
+  mounted() {
+    this.load()
+  },
+
+  methods: {
+    async load() {
+      this.loading = true
+      this.loadFailed = false
+      try {
+        await this.store.fetchLists()
+      } catch (err) {
+        // No encryption case to handle here, and that is the design rather than an omission: the
+        // index is titles and counts, both plaintext however a list is stored (§1), so this page
+        // never needs a key and never has to explain itself.
+        //
+        // Offline with lists already in the store: keep showing them. They are the same
+        // records the editor works on, so at worst they are a little stale — while an empty
+        // page would suggest the lists are gone.
+        if (!isNetworkError(err) || !this.store.visibleLists.length) this.loadFailed = true
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async create() {
+      const name = this.newName.trim()
+      if (!name || this.creating) return
+      this.creating = true
+      try {
+        // Succeeds offline too — the list is created locally and pushed later — so the only
+        // way here is a refusal from the server, e.g. a name it will not accept.
+        const list = await this.store.createList(name)
+        this.newName = ''
+        this.$router.push(`/list/${list.id}`)
+      } catch {
+        // Nothing was created, so there is nothing to undo — keep the typed name so the
+        // button can simply be pressed again.
+        this.$q.notify({ type: 'negative', message: 'Could not create the list.' })
+      } finally {
+        this.creating = false
+      }
+    },
+
+    open(id) {
+      this.$router.push(`/list/${id}`)
+    },
+
+    remove(list) {
+      this.$q.dialog({
+        title: 'Delete list',
+        message: `Delete "${list.name}"? This cannot be undone.`,
+        cancel: true,
+        ok: { label: 'Delete', color: 'negative' },
+      }).onOk(async () => {
+        // The row goes immediately either way; offline the deletion is queued, which needs no
+        // announcement. Only the server actively refusing is worth a word.
+        if ((await this.store.deleteList(list.id)) === 'failed') {
+          this.$q.notify({ type: 'negative', message: 'Could not delete the list.' })
+        }
       })
-      return
-    }
-    // Caches first, as on logout, and then `endSession` rather than `logout` — a request now
-    // would resurrect the account through the 401 recovery path. See `deleteAccount` in the
-    // auth store.
-    clearLocalState()
-    await authStore.endSession()
-    router.push('/login')
-  })
-}
+    },
 
-onMounted(load)
+    // Only worth a retry if the last attempt actually failed — a successful index does not
+    // need refetching just because the connection blinked. `stale` is part of that: falling
+    // back to the cached lists leaves `loadFailed` false, and without this the notice saying
+    // they are unconfirmed would still be true and never get a chance to stop being true.
+    retryWhenOnline() {
+      if (this.loadFailed || this.store.stale) this.load()
+    },
+
+    /**
+     * What both ways of leaving have to do on this device, and **before the session ends**.
+     *
+     * The lists outlive this page, so they have to go explicitly — otherwise the next person to
+     * sign in sees them until their own fetch lands. The same for the key: leaving it in memory
+     * would let the next account's ciphertext be "decrypted" with somebody else's DEK, which
+     * fails in the least obvious way possible.
+     *
+     * The ordering is the part that is easy to get wrong, because getting it wrong is silent.
+     * Both caches are keyed by `authStore.user.uid`, and `logout` clears that — so called
+     * afterwards, these two clear the key for `anon` and leave the real ones sitting on the
+     * device. That is what this used to do.
+     */
+    clearLocalState() {
+      this.store.clear()
+      this.encryption.reset()
+    },
+
+    async onLogout() {
+      this.clearLocalState()
+      await this.authStore.logout()
+      this.$router.push('/login')
+    },
+
+    /**
+     * The one action in the app with no undo and no server-side copy to recover from — Play's
+     * User Data policy requires it to be reachable from inside the app, and the privacy policy
+     * describes exactly what it removes.
+     *
+     * `persistent` because a tap outside the dialog is not consent, and the button says what it
+     * does rather than "OK" — this menu entry sits one row below "Log out", and the two must not
+     * be confusable at the moment of confirming.
+     */
+    onDeleteAccount() {
+      this.$q.dialog({
+        title: 'Delete account',
+        message:
+          'This deletes your account, every list on it, and the keys to your locked lists. ' +
+          'Nobody can undo it or recover the contents afterwards — not even the developer, ' +
+          'because the server never had the keys.',
+        cancel: true,
+        persistent: true,
+        ok: { label: 'Delete everything', color: 'negative' },
+      }).onOk(async () => {
+        try {
+          await this.authStore.deleteAccount()
+        } catch (err) {
+          // Nothing local has been touched, so the session is still usable and the only thing
+          // to do is say so. Unlike a list edit this cannot be queued for later: a deletion
+          // that happens whenever the connection returns is not something to leave armed.
+          this.$q.notify({
+            type: 'negative',
+            message: isNetworkError(err)
+              ? 'You need to be online to delete your account.'
+              : 'Could not delete your account.',
+          })
+          return
+        }
+        // Caches first, as on logout, and then `endSession` rather than `logout` — a request now
+        // would resurrect the account through the 401 recovery path. See `deleteAccount` in the
+        // auth store.
+        this.clearLocalState()
+        await this.authStore.endSession()
+        this.$router.push('/login')
+      })
+    },
+  },
+}
 </script>
 
 <style scoped>
