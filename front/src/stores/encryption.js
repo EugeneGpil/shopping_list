@@ -256,12 +256,18 @@ export const useEncryptionStore = defineStore('encryption', {
         try {
           // Edits to an encrypted list made before the key arrived were held back rather than
           // written in the clear (`payloadOf`), and this is the trigger that knows they can go.
-          // Awaiting it now waits for the pass rather than returning on a flag: a pass another
-          // trigger has already started is joined rather than skipped, so `fetchLists` below
-          // cannot overlap one. Ordering is what that guarantees, not an empty queue — a pass
-          // that has already stopped on this very list leaves its edit for the next trigger.
+          // Awaiting it waits for the pass rather than returning on a flag: a pass another
+          // trigger has already started is joined rather than skipped. Ordering is what that
+          // guarantees, not an empty queue — a pass that has already stopped on this very list
+          // leaves its edit for the next trigger.
           await lists.sync()
-          // Cheap, and it settles the collection before the editor reacts — see above.
+          // Still worth its own line now that `fetchLists` flushes before it reads: pushing the
+          // held edits is what this unlock is *for*, and leaving that to a read makes it hostage
+          // to a detail of how the index is fetched. It costs nothing in the ordinary case either
+          // — the pass above has just drained the queue, so the one below finds nothing and sends
+          // no requests. When that pass stopped early, the read's own flush is what takes the
+          // rest, which is the outcome this unlock wants anyway.
+          // Cheap, then, and it settles the collection before the editor reacts — see above.
           await lists.fetchLists()
         } catch (err) {
           // Offline is not a failed unlock — the key is here and the cache is what the user is

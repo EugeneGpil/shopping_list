@@ -36,8 +36,13 @@ export function makeServer() {
     writesLeft: null,
     // The one path that fails while everything else answers. See `offlineOn`.
     deadPath: null,
-    // The requests whose answer is being withheld, and the promise that lets them go. See `hold`.
+    // The status the next request is answered with instead of being handled. See `failOnce`.
+    failStatus: null,
+    // The requests being withheld before they are answered, and the promise that lets them go.
+    // See `hold`.
     held: null,
+    // And the ones already answered whose reply is being withheld. See `holdReply`.
+    heldReply: null,
   }
 
   server.seed = (name, items = [], { encrypted = false } = {}) => {
@@ -121,6 +126,14 @@ export function makeServer() {
     ok: status < 400,
     status,
     json: async () => ({ data, message: '', errors: null }),
+  })
+
+  // An unhandled failure, in the envelope Laravel writes for one: `message` alone, not the
+  // three keys `ApiResponse` sends. Both shapes reach the client under `api/*`.
+  const fail = (status) => ({
+    ok: false,
+    status,
+    json: async () => ({ message: 'Server Error' }),
   })
 
   function handle(method, path, query, body) {
@@ -256,6 +269,35 @@ export function makeServer() {
   }
 
   /**
+   * Answer the next request — whatever it is — with `status`, then go back to normal.
+   *
+   * The one answer `handle` cannot produce: every status it knows how to send is part of the
+   * protocol the client reconciles against, and a client has to distinguish those from a server
+   * that simply broke. Armed once rather than per path, because the tests that need it arrange
+   * for exactly one request to be in flight.
+   */
+  server.failOnce = (status) => {
+    server.failStatus = status
+  }
+
+  /**
+   * The machinery both kinds of withholding need: a matcher, and a promise the test resolves.
+   *
+   * Two slots rather than one, so a test can arm both at the same time — one request on its way
+   * out and another's reply on its way back is exactly the shape of the races worth reproducing.
+   */
+  const withhold = (slot) => (matches) => {
+    let open
+    const held = { matches, gate: new Promise((resolve) => (open = resolve)) }
+    server[slot] = held
+
+    return () => {
+      if (server[slot] === held) server[slot] = null
+      open()
+    }
+  }
+
+  /**
    * Take the requests `matches(method, path)` picks out and leave them unanswered until the
    * returned `release` is called — one request genuinely in flight while the test carries on.
    *
@@ -263,16 +305,20 @@ export function makeServer() {
    * test means to still be on the wire has already landed by its next line. That is what hides a
    * race between two stores rather than reproducing it.
    */
-  server.hold = (matches) => {
-    let open
-    const held = { matches, gate: new Promise((resolve) => (open = resolve)) }
-    server.held = held
+  server.hold = withhold('held')
 
-    return () => {
-      if (server.held === held) server.held = null
-      open()
-    }
-  }
+  /**
+   * Answer the matching request from the state it finds *now* and hand that answer over only when
+   * the returned `release` is called.
+   *
+   * The difference from `hold` is the whole point, and it is the difference between the two halves
+   * of a request. `hold` withholds the request, so its answer is computed on release and is
+   * therefore current — a slow connection on the way out. This withholds the reply of a request
+   * that has already landed, so the client reads an answer describing a world that has since moved
+   * on: the index read whose answer predates a delete that has since committed, which is the one
+   * ordering `_fetchIndex` cannot reconcile its way out of.
+   */
+  server.holdReply = withhold('heldReply')
 
   server.install = () => {
     globalThis.fetch = async (url, init = {}) => {
@@ -296,17 +342,23 @@ export function makeServer() {
       server.requests.push(`${method} ${path}${parsed.search}`)
       if (init.body !== undefined) server.sent.push({ method, path, raw: String(init.body) })
 
-      // After the recording, before the answer: the request is on the wire and what waits is
-      // the reply, which is what a slow connection actually does.
+      // After the recording, before the answer exists: the request has left, and `handle` will
+      // compute its answer from whatever the state is on release.
       const held = server.held
       if (held?.matches(method, path)) await held.gate
 
-      return handle(
-        method,
-        path,
-        parsed.searchParams,
-        init.body ? JSON.parse(init.body) : undefined,
-      )
+      const failStatus = server.failStatus
+      server.failStatus = null
+
+      const response = failStatus
+        ? fail(failStatus)
+        : handle(method, path, parsed.searchParams, init.body ? JSON.parse(init.body) : undefined)
+
+      // The other half: answered, and what waits is the delivery. See `holdReply`.
+      const heldReply = server.heldReply
+      if (heldReply?.matches(method, path)) await heldReply.gate
+
+      return response
     }
   }
 

@@ -25,9 +25,9 @@ import _uid from './actions/uid'
  * Every shopping list the app knows about, and everything that changes one.
  *
  * `lists` is the single source of truth for both pages: the index renders each record's
- * `name` and `items_count`, the editor renders the `items` of whichever record `openId`
- * points at. There is one object per list and it is never copied, so a rename made in the
- * editor is already correct on the index.
+ * `name` and its row count (`itemCountOf`), the editor renders the `items` of whichever
+ * record `openId` points at. There is one object per list and it is never copied, so a
+ * rename made in the editor is already correct on the index.
  *
  * **The UI reads and writes this store, never the network.** Local state is authoritative
  * and mirrored into localStorage on every change, so the app works offline and across a
@@ -78,6 +78,9 @@ const definition = defineStore('shoppingLists', {
   getters: {
     // The two states worth interrupting for: a real failure, and an edit that lost to a
     // newer copy. "Saved on this device" is not one of them — that is normal offline life.
+    // Reported by every push now, not only the debounced one, so a pass draining the queue can
+    // raise this for the list on screen. Deliberately: a write the user is never told about is
+    // the worse bug.
     saveFailed: (state) =>
       state.saveStatus === SAVE_STATUS.failed || state.saveStatus === SAVE_STATUS.conflict,
 
@@ -154,6 +157,21 @@ const definition = defineStore('shoppingLists', {
 
     /** Tombstoned lists stay in `lists` until the server agrees, but are not shown. */
     visibleLists: (state) => state.lists.filter((l) => !l.pendingDelete),
+
+    /**
+     * How many rows to show against a list on the index.
+     *
+     * Not `items_count`, which is what the *server* holds (see `record.js`) and is deliberately
+     * left alone by a row added or deleted offline — correct as a field, and the wrong number to
+     * put in front of a person: a list edited offline read "3 item(s)" above four rows until the
+     * next sync. So a list whose rows are cached counts the rows, which is what the user can see.
+     *
+     * The fallback is the whole reason this is not just `items?.length`. `items` is null until the
+     * list has been opened on this device, and that is most of them most of the time — the index
+     * is the first screen and opening a list is what fetches its rows. For those, the server's
+     * figure is the only figure there is.
+     */
+    itemCountOf: () => (list) => list.items?.length ?? list.items_count ?? 0,
 
     /**
      * How many of the lists on screen are locked. One half of the encryption store's

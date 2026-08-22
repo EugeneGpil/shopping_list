@@ -153,8 +153,12 @@ export default {
         try {
           await this.encryption.removePasskey(key.credential_id)
         } catch (err) {
-          // 409 is the server refusing to leave this account with no way in at all.
-          this.error = err.body?.message ?? 'Could not remove that passkey.'
+          // An error body is only user-facing when the server wrote it for a user, and the 409 —
+          // the last-passkey rule this panel exists to explain — is the one that did. Every other
+          // failure under `api/` now answers JSON too, and showing *its* `message` puts a literal
+          // "Unauthenticated." on screen, or an exception message under `APP_DEBUG`.
+          this.error =
+            (err.status === 409 ? err.body?.message : null) ?? 'Could not remove that passkey.'
         }
       })
     },

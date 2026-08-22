@@ -42,14 +42,39 @@ export default {
   },
 
   /**
-   * Send one list: create it first if it only exists here, then PUT the whole document.
+   * Send one list, and say how it went.
    *
    * Returns what happened rather than throwing, because every caller wants to carry on:
    * 'saved' | 'conflict' | 'offline' | 'failed' | 'locked'.
+   *
+   * **The reporting is here, not in `_save`, because this is where the outcome is known.** Only
+   * the debounced per-list path used to report, so a record pushed by a pass — the offline queue
+   * draining, any of `MainLayout`'s four triggers — left the indicator saying whatever the last
+   * local save had said: "Saved on this device", indefinitely, about an edit that had reached the
+   * server minutes ago. And the same silence covered a background *failure*, which is the half
+   * worth the noise: a write the user is not told about is the worse bug, so a background
+   * conflict or error is allowed to raise the banner for the list they are looking at.
+   *
+   * `_report` is what keeps that from being noise on every other push: it says nothing unless the
+   * list is the one on screen, so a pass flushing twenty lists writes the indicator at most once.
    */
   async _pushList(record) {
-    // A tombstoned list has nothing worth sending; `_pushDelete` owns it from here.
+    // Before anything is reported: a tombstoned list has nothing worth sending, `_pushDelete`
+    // owns it from here, and saying "Saved" about a push that never happened would overwrite the
+    // open list's status with an answer to a question nobody asked.
     if (!record || record.pendingDelete) return 'saved'
+
+    const outcome = await this._sendList(record)
+    this._report(record.id, outcome)
+
+    return outcome
+  },
+
+  /**
+   * The request itself, split out so `_pushList` has exactly one place to report from — the body
+   * has seven ways of ending and repeating the call at each of them is how one gets forgotten.
+   */
+  async _sendList(record) {
     try {
       // Built once, before the create: the name goes out encrypted on both requests, and
       // building it twice would encrypt it under two IVs for no reason.

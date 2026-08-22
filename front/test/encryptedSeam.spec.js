@@ -411,5 +411,22 @@ describe('the encryption seam', () => {
       expect(JSON.stringify(server.lists[0])).toBe(before)
       expect(record.dirty).toBe(true)
     })
+
+    it('says a held edit is saved on this device, in the offline words', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+      expect(store.saveStatus).toBe('Saved')
+
+      record.items[0].name = 'селёдка'
+      record.dirty = true
+      clearDek()
+
+      await store.sync()
+
+      // The same words an offline edit gets, because it is the same situation: the edit is safe
+      // here and goes up after the unlock. Calling that a failure would make a working app look
+      // broken to the one user who has done nothing wrong.
+      expect(store.saveStatus).toBe('Saved on this device')
+      expect(store.saveFailed).toBe(false)
+    })
   })
 })

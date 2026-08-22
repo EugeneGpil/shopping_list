@@ -17,7 +17,11 @@ export const SAVE_STATUS = {
   conflict: 'Replaced by a newer version',
 }
 
-/** What `_pushList` reports, in the words the user sees. */
+/**
+ * What `_pushList` reports, in the words the user sees. Read only by `_report`, so the mapping
+ * and the strings it maps to stay in one file — `sync.js` reports an outcome and never has to
+ * know how one is worded.
+ */
 const OUTCOME_STATUS = {
   saved: SAVE_STATUS.saved,
   offline: SAVE_STATUS.offline,
@@ -35,6 +39,9 @@ const OUTCOME_STATUS = {
  * the full item set on every PUT, so there is never more than one request to make. Nothing
  * here fails — `_pushList` reports what happened and the worst case is that the change
  * stays local until `sync` gets another chance.
+ *
+ * The reporting call is in `_pushList` now, so a list pushed by a pass updates the indicator
+ * exactly as one saved from the editor does.
  *
  * Owns the debounce timer, which lives in `privates`. Nothing else may touch it.
  */
@@ -61,12 +68,24 @@ export default {
     if (!record) return
     this._markDirty()
     this.saveStatus = SAVE_STATUS.saving
-    this._report(record.id, OUTCOME_STATUS[await this._pushList(record)])
+    // No reporting here: `_pushList` does it, for this push and every other one.
+    await this._pushList(record)
   },
 
-  /** Only report a result if that list is still the one on screen. */
-  _report(id, status) {
-    if (this.openId === id) this.saveStatus = status
+  /**
+   * Say what a push did, if that list is still the one on screen.
+   *
+   * The guard is what makes reporting from `_pushList` safe: a pass pushes every dirty list, and
+   * the indicator belongs to the one the user is looking at. A background push of anything else
+   * is silent.
+   */
+  _report(id, outcome) {
+    // Falling back to `failed` rather than to nothing: an unmapped outcome would write
+    // `undefined`, which hides the indicator entirely and reads as `saveFailed === false` — the
+    // exact bug this reporting exists to fix, and silent. The neighbouring vocabularies are
+    // wider than this map (`trash.js` answers 'queued'/'restored', its probe 'live'/'gone'), and
+    // making every push report is the point, so the next one routed through here must be loud.
+    if (this.openId === id) this.saveStatus = OUTCOME_STATUS[outcome] ?? SAVE_STATUS.failed
   },
 
   /** Await any pending save — use before navigating away. */

@@ -138,7 +138,7 @@
                 class="q-ml-xs"
               />
             </q-item-label>
-            <q-item-label caption>{{ list.items_count }} item(s)</q-item-label>
+            <q-item-label caption>{{ store.itemCountOf(list) }} item(s)</q-item-label>
           </q-item-section>
           <q-item-section side style="width: 20px; min-width: 20px" class="q-pl-none">
             <q-btn

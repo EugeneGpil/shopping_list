@@ -366,6 +366,185 @@ describe('editing offline', () => {
   })
 })
 
+/**
+ * The number under each list's name on the index, which used to be `items_count` straight from
+ * the record — the count the server holds, unmoved by a row added on this device. Correct as a
+ * field and wrong as a thing to show a person: the tester saw "3 item(s)" above four rows.
+ */
+describe('the item count on the index', () => {
+  it('counts the rows a list has, not the rows the server knows about', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }, { name: 'Bread' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    store.addRow()
+    editRow(store, 2, 'Eggs')
+    await store.flush()
+
+    expect(store.itemCountOf(store.current)).toBe(3)
+    // And the field itself is untouched, because it is not wrong: it still describes what the
+    // server holds, which is what the version check and the next index read are built on.
+    expect(store.current.items_count).toBe(2)
+  })
+
+  it('falls back to the server figure for a list whose rows are not cached', async () => {
+    server.seed('Groceries', [{ name: 'Milk' }, { name: 'Bread' }])
+    const store = freshStore()
+    await store.fetchLists()
+
+    const record = store.visibleLists[0]
+    // Never opened on this device, so there is nothing local to count — which is the state most
+    // lists are in most of the time, and why the fallback is not an edge case.
+    expect(record.items).toBe(null)
+    expect(store.itemCountOf(record)).toBe(2)
+  })
+})
+
+/**
+ * The words under the open list, which only the debounced save used to write.
+ *
+ * That is why these cases push through `sync()` rather than `flush()`: a pass is the path that
+ * reported nothing, so a list edited offline kept saying "Saved on this device" after the edit had
+ * reached the server, and a background conflict moved the notification but never the indicator.
+ * The guard in `_report` is the other half — the indicator belongs to the list on screen, and a
+ * pass pushes every dirty one.
+ */
+describe('the save indicator', () => {
+  it('says an edit is saved once a background pass has pushed it', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+    expect(store.saveStatus).toBe('Saved on this device')
+
+    // The reconnect, not a keystroke: nothing here goes near the debounced path.
+    server.offline = false
+    await store.sync()
+
+    expect(store.saveStatus).toBe('Saved')
+    expect(store.saveFailed).toBe(false)
+  })
+
+  it('raises the banner when a background push is refused by the server', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+
+    // Reachable, connection and all: a 500 on the PUT is not offline and not a conflict, and it
+    // is the outcome worth the noise — the user is looking at an edit the server would not take.
+    server.offline = false
+    server.failOnce(500)
+    await store.sync()
+
+    expect(store.saveStatus).toBe('Save failed')
+    expect(store.saveFailed).toBe(true)
+    // Still dirty, so the next trigger tries again — "failed" is about this attempt, not the edit.
+    expect(store.lists[0].dirty).toBe(true)
+  })
+
+  it('raises the banner when a background push loses to a newer copy', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+
+    server.offline = false
+    server.editElsewhere(seeded.id, [{ name: 'Milk' }, { name: 'Bread' }])
+    await store.sync()
+
+    // The edit is gone and the user is looking at the list it was made in, so this is the one
+    // case where a background push is worth interrupting for.
+    expect(store.saveStatus).toBe('Replaced by a newer version')
+    expect(store.saveFailed).toBe(true)
+    // Said once, in two registers — the notification carries the detail, the indicator persists.
+    // Reporting from `_pushList` must not double the notification `_reportConflict` already made.
+    expect(notifications).toHaveLength(1)
+  })
+
+  it('says nothing about a list the user is not looking at', async () => {
+    const groceries = server.seed('Groceries', [{ name: 'Milk' }])
+    const hardware = server.seed('Hardware', [{ name: 'Screws' }])
+    const store = freshStore()
+    await store.fetchLists()
+
+    await store.open(hardware.id)
+    server.offline = true
+    editRow(store, 0, 'Nails')
+    await store.flush()
+
+    // Moved on to a list with nothing to send, so the pass below pushes only the other one.
+    server.offline = false
+    await store.open(groceries.id)
+    expect(store.saveStatus).toBe('')
+
+    await store.sync()
+
+    expect(store.saveStatus).toBe('')
+    expect(server.lists.find((l) => l.id === hardware.id).items.map((i) => i.name)).toEqual([
+      'Nails',
+    ])
+  })
+
+  /**
+   * `_pushList` answers 'saved' for a tombstoned record without sending anything, and reporting
+   * that would tell the open list it had been saved when nothing was.
+   *
+   * Called directly because no pass reaches it: `_syncPass` sends tombstones first and a
+   * successful one drops the record before the push loop can see it. Which is precisely why the
+   * guard needs pinning here — nothing else would notice if it went.
+   */
+  it('does not call a tombstone saved', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+    store.current.pendingDelete = true
+
+    expect(await store._pushList(store.current)).toBe('saved')
+    expect(store.saveStatus).toBe('Saved on this device')
+  })
+
+  /**
+   * The words are looked up in a map that is total over what `_sendList` returns *today*, and
+   * nothing holds it that way: `trash.js` answers 'queued' and 'restored' from pushes of the same
+   * shape, so the next outcome routed through here may not be in it.
+   *
+   * Called directly because no producer sends an unmapped token yet — which is the point. A miss
+   * writes `undefined`, and that hides the indicator and reads as `saveFailed === false`: the
+   * silent direction, on the failures this reporting exists to make loud.
+   */
+  it('shows a failure rather than nothing for an outcome it has no words for', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    store._report(store.openId, 'queued')
+
+    expect(store.saveStatus).toBe('Save failed')
+    expect(store.saveFailed).toBe(true)
+  })
+})
+
 async function openWith(names) {
   const seeded = server.seed(
     'Groceries',
@@ -709,6 +888,52 @@ describe('creating and deleting offline', () => {
     expect(store.pendingCount).toBe(0)
   })
 
+  /**
+   * The one a refetch cannot reconcile its way out of, and the reason `fetchLists` flushes first.
+   *
+   * The tombstone is what `_fetchIndex` keeps a deleted list out of the index with — and by the
+   * time an answer computed before the delete is read, the delete has succeeded and dropped the
+   * record. So the entry matches nothing local and is indistinguishable from a list created on
+   * another device: it comes back with `pendingDelete: false` and renders.
+   *
+   * `holdReply` rather than `hold` is the whole test: an answer computed on release would know
+   * about the delete, and the tombstone would still be there to keep the entry out. It has to be
+   * computed early and delivered late, which is what a reconnect actually does.
+   */
+  it('does not resurrect a deleted list from an index answer that predates the delete', async () => {
+    const seeded = server.seed('Groceries')
+    const store = freshStore()
+    await store.fetchLists()
+
+    server.offline = true
+    await store.deleteList(seeded.id)
+    server.offline = false
+
+    const releaseDelete = server.hold(
+      (method, path) => method === 'DELETE' && path === 'shopping-list',
+    )
+    const releaseIndex = server.holdReply(
+      (method, path) => method === 'GET' && path === 'shopping-lists',
+    )
+
+    const refresh = store.fetchLists()
+    // Un-awaited, as `MainLayout` fires it. The read above has already started the pass, so this
+    // joins it rather than starting a second.
+    const flush = store.sync()
+    releaseDelete()
+    await flush
+    // Only now does the index answer arrive — describing a list that is already gone.
+    releaseIndex()
+    await refresh
+
+    expect(store.visibleLists).toHaveLength(0)
+    expect(server.lists).toHaveLength(0)
+    expect(store.pendingCount).toBe(0)
+    // The read joined the pass rather than starting one of its own: two awaits of the same
+    // flush, one tombstone on the wire.
+    expect(server.requests.filter((r) => r.startsWith('DELETE shopping-list'))).toHaveLength(1)
+  })
+
   it('keeps a reorder made offline and sends it once connected', async () => {
     const a = server.seed('A')
     const b = server.seed('B')
@@ -727,31 +952,42 @@ describe('creating and deleting offline', () => {
     expect(store.pendingCount).toBe(0)
   })
 
-  // The index read the page fires on reconnect can be answered from before the flush that is
-  // still running, and rebuilding `lists` from it took the server's order — which `_pushOrder`
-  // then sent back as the user's, with nothing left flagged to say the drag had been lost.
-  it('keeps the order the user dragged when a refresh lands mid-flush', async () => {
-    const groceries = server.seed('Groceries', [{ name: 'Milk' }])
+  /**
+   * An index answer that predates a drag, applied after it: rebuilding `lists` from that answer
+   * took the server's order — which `_pushOrder` then sent back as the user's, with nothing left
+   * flagged to say the drag had been lost.
+   *
+   * What lands inside the window is the drag now, and it used to be the flush: the same overlap
+   * was reachable by a refresh landing mid-flush, which `fetchLists` no longer allows — it waits
+   * the pass out before reading. So this is the way left to put a stale answer in front of the
+   * rule, and the rule is `_fetchIndex`'s alone either way.
+   */
+  it('keeps the order the user dragged when the index answer predates it', async () => {
+    server.seed('Groceries', [{ name: 'Milk' }])
     server.seed('Hardware')
     server.seed('Tally')
     const store = freshStore()
     await store.fetchLists()
-    await store.open(groceries.id)
 
+    // Answered from the order the server holds now, and delivered after the drag below.
+    const release = server.holdReply(
+      (method, path) => method === 'GET' && path === 'shopping-lists',
+    )
+    const refresh = store.fetchLists()
+    await settle(0)
+
+    // Offline so the drag stays flagged, which is the rule's whole precondition: an order that
+    // has been sent is one the server's answer cannot disagree with.
     server.offline = true
-    editRow(store, 0, 'Oat milk')
-    await store.flush()
     await store.reorderLists([...store.visibleLists].reverse())
     expect(store.visibleLists.map((l) => l.name)).toEqual(['Tally', 'Hardware', 'Groceries'])
 
     server.offline = false
-    const release = server.hold((method, path) => method === 'PUT' && path === 'shopping-list')
-    const flush = store.sync()
-    await store.fetchLists()
     release()
-    await flush
+    await refresh
 
     expect(store.visibleLists.map((l) => l.name)).toEqual(['Tally', 'Hardware', 'Groceries'])
+    await store.sync()
     expect(inOrder()).toEqual(['Tally', 'Hardware', 'Groceries'])
     expect(store.pendingCount).toBe(0)
   })
