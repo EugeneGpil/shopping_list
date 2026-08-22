@@ -23,6 +23,9 @@ import { EncryptionLockedError, isUnlocked, openField, sealField } from './encry
  *   dirty         local content the server has not accepted yet
  *   pendingDelete deleted here, tombstoned until the server agrees
  *   items         null until fetched, which is not the same as an empty list
+ *   items_count   written from whatever a read or a write brings back, plus the rows an import
+ *                 arrives with. A row added or deleted offline does not touch it, so until the
+ *                 next sync it describes what the server holds rather than what is on screen
  *
  * `id` stays put for the life of a record, including when a temp list is finally created
  * on the server — it only gains a `serverId`. That is what lets a user sit on
@@ -86,6 +89,33 @@ async function healLegacyTitle(name, encrypted) {
   }
 }
 
+/**
+ * Every field a record has, with the value it takes when the case at hand knows nothing
+ * about it. The constructors below, and `fromStorage`, pass only what their own case does know.
+ *
+ * Stated once because stating it three times did not hold: `localRecord` had lost
+ * `encrypted` altogether, so a list created offline carried `undefined` where `payloadOf`,
+ * `currentEncrypted` and `encryptedCount` all expect a boolean — harmless only because each
+ * of them coerces. A case can still be wrong about a value here, but it can no longer be
+ * missing one.
+ */
+function makeRecord(fields) {
+  return {
+    id: null,
+    serverId: null,
+    name: '',
+    show_quantity: true,
+    show_checkbox: true,
+    items_count: 0,
+    items: null,
+    version: null,
+    encrypted: false,
+    dirty: false,
+    pendingDelete: false,
+    ...fields,
+  }
+}
+
 /** A full record from `GET/POST/PUT shopping-list`, which always includes the items. */
 export async function recordFromApi(data) {
   const encrypted = !!data.encrypted
@@ -104,13 +134,13 @@ export async function recordFromApi(data) {
     healLegacyTitle(data.name, encrypted),
   ])
 
-  return {
+  return makeRecord({
     id: data.id,
     serverId: data.id,
     // Never encrypted, on purpose (§1): the index has to render every title without a key,
     // so the app opens and works with no prompt at all until an encrypted list is opened.
     // The cost is that the server learns the *title* of a private list, never its contents.
-    name: title.name,
+    name: title.name ?? '',
     show_quantity: data.show_quantity ?? true,
     show_checkbox: data.show_checkbox ?? true,
     items_count: items.length,
@@ -122,49 +152,41 @@ export async function recordFromApi(data) {
     // Normally false: a record straight from the server has nothing pending. True only for a
     // legacy title just opened, which is a local change the server has not got yet.
     dirty: title.healed,
-    pendingDelete: false,
-  }
+  })
 }
 
 /**
- * What the index endpoint gives us: everything except the items.
+ * What the index endpoint gives us: everything except the items and the column settings.
  *
  * Never needs the key, and that is the point of the design: titles are plaintext, so the whole
  * index renders on a locked device exactly as it does on an unlocked one.
  */
 export function recordFromIndexEntry(entry) {
-  return {
+  return makeRecord({
     id: entry.id,
     serverId: entry.id,
-    name: entry.name,
-    show_quantity: true,
-    show_checkbox: true,
-    items_count: entry.items_count,
-    // Not "empty" — unread. The column settings above are placeholders for the same
-    // reason, and are replaced by the full read that happens when the list is opened.
+    name: entry.name ?? '',
+    items_count: entry.items_count ?? 0,
+    // Not "empty" — unread. The column settings the index says nothing about are left at
+    // their defaults for the same reason, and both are replaced by the full read that
+    // happens when the list is opened.
     items: null,
     version: entry.version ?? null,
     encrypted: !!entry.encrypted,
-    dirty: false,
-    pendingDelete: false,
-  }
+  })
 }
 
 /** A record for a list created while offline: real and editable, just not on the server. */
 export function localRecord(name) {
-  return {
+  return makeRecord({
     id: nextTempId(),
-    serverId: null,
     name,
-    show_quantity: true,
-    show_checkbox: true,
-    items_count: 0,
+    // Empty rather than unread: there is no server copy to read, so this list is complete
+    // the moment it exists.
     items: [],
-    version: null,
     // Dirty from birth: the list itself is the pending change.
     dirty: true,
-    pendingDelete: false,
-  }
+  })
 }
 
 /**
@@ -228,10 +250,20 @@ export function forStorage(records) {
   }))
 }
 
-/** The inverse: rows come back as rows, with keys from this session's counter. */
+/**
+ * The inverse: rows come back as rows, with keys from this session's counter.
+ *
+ * Through `makeRecord` as well, so the cache is held to the same shape as the three
+ * constructors. A record written by an older build is missing whatever fields that build did
+ * not have — `encrypted` for anything created offline before the collapse — and without this
+ * it would come back with that gap every launch, until the list reaches the server and a
+ * full read fills it in.
+ */
 export function fromStorage(records) {
-  return records.map((r) => ({
-    ...r,
-    items: r.items?.map((i) => createRow(i)) ?? null,
-  }))
+  return records.map((r) =>
+    makeRecord({
+      ...r,
+      items: r.items?.map((i) => createRow(i)) ?? null,
+    }),
+  )
 }

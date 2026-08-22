@@ -29,7 +29,7 @@
     <ShoppingListLoading
       v-else-if="!store.isLoaded"
       :name="store.listName"
-      :rows="store.current?.items_count ?? 3"
+      :rows="store.currentItemsCount"
       @back="$router.push('/')"
     />
 

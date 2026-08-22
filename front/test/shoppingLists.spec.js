@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { installLocalStorage, makeServer } from './fakeServer'
 import { notifications } from './stubs/quasar'
+import {
+  forStorage,
+  fromStorage,
+  localRecord,
+  recordFromApi,
+  recordFromIndexEntry,
+} from 'src/stores/shoppingLists/record'
 
 // The real auth store boots Firebase, which has no business in these tests. Only the two
 // things the lists store asks of it are needed.
@@ -41,6 +48,65 @@ beforeEach(() => {
   notifications.length = 0
 })
 
+// The record shape itself, on every way there is of producing one. Everything else that
+// touches a record reads it by name — `items`, `dirty`, `encrypted` — so a field one producer
+// leaves out is invisible until a reader coerces the missing value into a wrong answer. That
+// is what `localRecord` did with `encrypted` while the field list was written out three times.
+describe('one shape for every list record', () => {
+  it('has the same fields, in the same order, however the record was made', async () => {
+    const store = freshStore()
+    const records = {
+      api: await recordFromApi({ id: 1, name: 'Groceries', items: [{ name: 'Milk' }] }),
+      // Neither `items_count` nor `encrypted`: an entry can say less than the current server
+      // does, and filling that in is the producer's job rather than the reader's.
+      index: recordFromIndexEntry({ id: 2, name: 'Hardware' }),
+      local: localRecord('Offline'),
+      imported: store.importLists([{ title: 'Keep', items: ['milk'] }])[0],
+      // What the last session wrote, read back — the shape has to survive the cache too.
+      hydrated: fromStorage(forStorage([localRecord('Cached')]))[0],
+      // And a cache an older build wrote: ten keys, no `encrypted`. Hydration is the only
+      // place that gap can be closed before the list reaches the server, so this is the case
+      // that fails if `fromStorage` goes back to a plain spread.
+      repaired: fromStorage([
+        {
+          id: 'tmp-9',
+          serverId: null,
+          name: 'Stale',
+          show_quantity: true,
+          show_checkbox: true,
+          items_count: 0,
+          items: [{ name: 'Milk', quantity: '', checked: false }],
+          version: null,
+          dirty: true,
+          pendingDelete: false,
+        },
+      ])[0],
+    }
+
+    const fields = Object.keys(records.api)
+    for (const [made, record] of Object.entries(records)) {
+      // Order as well as membership: `sameRecord` compares records as stringified JSON, so
+      // two of them with the same values in a different order read as a change. This holds
+      // the producers to each other — reordering `makeRecord` moves them all and passes.
+      expect(Object.keys(record), made).toEqual(fields)
+      // `Object.keys` counts a key whose value is `undefined`, and `JSON.stringify` drops it
+      // — so one of those is a field that goes missing again the moment the record is saved.
+      expect(
+        Object.entries(record).filter(([, v]) => v === undefined),
+        made,
+      ).toEqual([])
+    }
+
+    expect(records.repaired.encrypted).toBe(false)
+  })
+
+  it('tells a list created offline it is not encrypted, rather than leaving it unsaid', () => {
+    // `payloadOf` puts this in every write and the header lights the lock by it, so a list
+    // born here has to answer the question the same way a list from the server does.
+    expect(localRecord('Groceries').encrypted).toBe(false)
+  })
+})
+
 describe('reading offline', () => {
   it('serves a list from cache with no network at all', async () => {
     const seeded = server.seed('Groceries', [{ name: 'Milk' }])
@@ -76,6 +142,75 @@ describe('reading offline', () => {
     const store = freshStore()
     server.offline = true
     await expect(store.open(99)).rejects.toThrow()
+  })
+})
+
+// What the placeholder on the list page is shown by: `ShoppingListPage` renders
+// `ShoppingListLoading` — the skeleton rows and the spinner — while `isLoaded` is false and
+// the list is neither locked nor unreachable, and the editor after that. Pinned here because
+// the flag is the only part of that screen these tests can see, and because it is the same
+// flag that stops a first debounce from PUTting an empty list over real data.
+describe('knowing a list has not arrived yet', () => {
+  /**
+   * Hold the one request that opening an uncached list makes, so the store can be looked at
+   * while it is still out. `release()` lets the answer through, and `reached` is what makes
+   * the assertion before it a statement about a fetch in flight rather than about a fetch
+   * that never started.
+   */
+  function holdItemsRequest() {
+    const answer = globalThis.fetch
+    const held = { reached: false }
+    held.arrived = new Promise((resolve) => {
+      held.release = resolve
+    })
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('shopping-list?list_id=')) {
+        held.reached = true
+        await held.arrived
+      }
+      return answer(url, init)
+    }
+    return held
+  }
+
+  it('stays unloaded until the items land, for a list known only from the index', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }, { name: 'Bread' }])
+    const store = freshStore()
+    await store.fetchLists()
+
+    // The index carries titles and counts but no items, and that is the one state that
+    // fetches them — the count is what the placeholder sizes itself by.
+    const record = store.lists.find((l) => l.id === seeded.id)
+    expect(record.items).toBe(null)
+    expect(record.items_count).toBe(2)
+
+    const held = holdItemsRequest()
+    const opening = store.open(seeded.id)
+    await settle(0)
+    expect(held.reached).toBe(true)
+    expect(store.isLoaded).toBe(false)
+
+    held.release()
+    await opening
+    expect(store.isLoaded).toBe(true)
+    expect(store.items.map((i) => i.name)).toEqual(['Milk', 'Bread'])
+  })
+
+  it('is loaded on the first frame for a list already saved on this device', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const first = freshStore()
+    await first.fetchLists()
+    await first.open(seeded.id)
+    await settle()
+
+    // Relaunched. The items came back from localStorage, so there is nothing to wait for and
+    // the placeholder must never appear — not even for the frame `open()` is awaited in,
+    // which is why this is asserted before the promise is.
+    const second = freshStore()
+    const opening = second.open(seeded.id)
+    expect(second.isLoaded).toBe(true)
+    await opening
+    expect(second.isLoaded).toBe(true)
   })
 })
 

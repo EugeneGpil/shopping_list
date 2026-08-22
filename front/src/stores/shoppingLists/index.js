@@ -95,6 +95,13 @@ const definition = defineStore('shoppingLists', {
     listName() {
       return this.current?.name ?? ''
     },
+    /**
+     * How many rows the index says the open list has, or 0 when it has not said, for sizing
+     * the loading placeholder.
+     */
+    currentItemsCount() {
+      return this.current?.items_count ?? 0
+    },
     /** Whether the open list is one of the encrypted ones — what lights the lock in its header. */
     currentEncrypted() {
       return !!this.current?.encrypted

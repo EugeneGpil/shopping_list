@@ -15,7 +15,7 @@ export default {
    * items, which is what makes this narrower than it looks.
    */
   _applyIndexEntry(known, entry) {
-    known.items_count = entry.items_count
+    known.items_count = entry.items_count ?? 0
     // Local content the server has not accepted yet outranks anything it tells us; the
     // conflict is settled at push time, where the version check lives.
     if (known.dirty) return
