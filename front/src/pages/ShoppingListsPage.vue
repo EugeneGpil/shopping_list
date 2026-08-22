@@ -33,6 +33,12 @@
                 {{ encryption.enabled ? 'Encryption key' : 'Set up encryption' }}
               </q-item-section>
             </q-item>
+            <!-- Above the separator with the other everyday things: the trash is somewhere to
+                 go and look, not one of the two account actions below the line. -->
+            <q-item clickable @click="$router.push('/trash')">
+              <q-item-section avatar><q-icon name="delete_outline" /></q-item-section>
+              <q-item-section>Trash</q-item-section>
+            </q-item>
             <q-separator />
             <q-item clickable @click="onLogout">
               <q-item-section avatar><q-icon name="logout" /></q-item-section>
@@ -164,6 +170,8 @@ import retryWhenOnline from 'src/mixins/retryWhenOnline'
 import { useAuthStore } from 'src/stores/auth'
 import { useEncryptionStore } from 'src/stores/encryption'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
+import { useTrashStore } from 'src/stores/trash'
+import { RETENTION_DAYS } from 'src/utils/trashClock'
 
 export default {
   name: 'ShoppingListsPage',
@@ -194,6 +202,10 @@ export default {
 
     store() {
       return useShoppingListsStore()
+    },
+
+    trash() {
+      return useTrashStore()
     },
   },
 
@@ -247,7 +259,11 @@ export default {
     remove(list) {
       this.$q.dialog({
         title: 'Delete list',
-        message: `Delete "${list.name}"? This cannot be undone.`,
+        // The window comes from `RETENTION_DAYS`; see its docblock for why that is a
+        // client-side literal rather than something the server tells us.
+        message:
+          `Delete "${list.name}"? It goes to the trash, where you can put it back ` +
+          `for the next ${RETENTION_DAYS} days.`,
         cancel: true,
         ok: { label: 'Delete', color: 'negative' },
       }).onOk(async () => {
@@ -282,6 +298,10 @@ export default {
      */
     clearLocalState() {
       this.store.clear()
+      // For exactly the same reason, and with the same ordering trap: the trash cache is keyed
+      // by uid too, and it holds the names of the departing account's deleted lists — plus the
+      // contents of any that were opened on this device.
+      this.trash.clear()
       this.encryption.reset()
     },
 

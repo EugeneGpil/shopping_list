@@ -4,12 +4,13 @@ import { EncryptionLockedError, isUnlocked, openField, sealField } from './encry
  * The shape of a list record, and the two translations between it and the API.
  *
  * **This is also the encryption seam** (`docs/go_encrypted.md` §4). `recordFromApi` and
- * `recordFromIndexEntry` decrypt on the way in; `payloadOf` encrypts on the way out. Nothing
+ * `trashedRecordFromApi` decrypt on the way in; `payloadOf` encrypts on the way out. Nothing
  * above this file ever sees ciphertext — search, the row editor, undo, `numericTotal` all work
  * on plaintext in memory exactly as before — and nothing below it ever sees plaintext.
  *
- * That is why these three functions are async while everything around them is not: WebCrypto
- * has no synchronous API, so the seam is where the `await`s land.
+ * That is why those three are async while everything around them is not: WebCrypto has no
+ * synchronous API, so the seam is where the `await`s land. `recordFromIndexEntry` is the one
+ * that is neither, and says why itself: the index carries no ciphertext, so it needs no key.
  *
  * A record is what the app renders and what gets written to localStorage, so it carries
  * the sync bookkeeping alongside the data:
@@ -153,6 +154,26 @@ export async function recordFromApi(data) {
     // legacy title just opened, which is a local change the server has not got yet.
     dirty: title.healed,
   })
+}
+
+/**
+ * The same list read out of the trash: a record, plus the two dates only a trashed one has.
+ *
+ * A named constructor rather than a spread at the call site for the reason `makeRecord` exists
+ * at all — an inline shape is one nothing states, and `TrashedListPage` reads `purge_at` from it
+ * with no way to tell a field it can rely on from one that happened to be there.
+ *
+ * Deliberately a superset rather than a fourth interchangeable producer: these two fields make
+ * it a different shape from every other record, which is safe only because a trashed record
+ * never goes near the machinery that assumes they all match — it is not in the lists store,
+ * `forStorage` never sees it, and nothing compares it to a live record.
+ */
+export async function trashedRecordFromApi(data) {
+  return {
+    ...(await recordFromApi(data)),
+    deleted_at: data.deleted_at ?? null,
+    purge_at: data.purge_at ?? null,
+  }
 }
 
 /**

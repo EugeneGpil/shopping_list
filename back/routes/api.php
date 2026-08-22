@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EncryptionController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\ShoppingListController;
+use App\Http\Controllers\Api\TrashController;
 use Illuminate\Support\Facades\Route;
 
 // Probed by the deploy after the containers come up.
@@ -26,7 +27,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('shopping-lists/order', [ShoppingListController::class, 'reorder']);
     Route::get('shopping-list', [ShoppingListController::class, 'show']);
     Route::put('shopping-list', [ShoppingListController::class, 'update']);
+    // Moves the list to the trash rather than removing it — see `TrashController`.
     Route::delete('shopping-list', [ShoppingListController::class, 'destroy']);
+
+    // The trash: what has been deleted and is not gone yet. Read, restore, or remove for
+    // good — there is no write path, which is what makes a trashed list read-only.
+    Route::get('trash', [TrashController::class, 'index']);
+    Route::get('trash/list', [TrashController::class, 'show']);
+    Route::post('trash/restore', [TrashController::class, 'restore']);
+    Route::delete('trash', [TrashController::class, 'destroy']);
 
     // The wrapped data keys, one per passkey. `PUT` is an upsert keyed on `credential_id`, so
     // registering the same passkey twice replaces its row rather than adding one.

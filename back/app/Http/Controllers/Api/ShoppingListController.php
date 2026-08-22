@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\ApiResponse;
 use App\Http\Controllers\Controller;
+use App\Http\Presenters\ShoppingListPresenter;
 use App\Http\Requests\ShoppingList\DestroyShoppingListRequest;
 use App\Http\Requests\ShoppingList\ReorderShoppingListsRequest;
 use App\Http\Requests\ShoppingList\ShowShoppingListRequest;
@@ -24,9 +25,8 @@ class ShoppingListController extends Controller
             ->withCount('items')
             ->orderBy('position')
             ->orderBy('id')
-            // `encrypted` travels with every list everywhere it appears: a client reading the
-            // index has to know whether the name it just received is a name or ciphertext
-            // before it can put it on screen.
+            // `encrypted` travels with every list everywhere it appears: the index needs it
+            // to mark a list as locked, and the editor needs it before it can read the rows.
             ->get(['id', 'name', 'position', 'created_at', 'version', 'encrypted']);
 
         return ApiResponse::success($lists);
@@ -63,14 +63,14 @@ class ShoppingListController extends Controller
 
         $list = $request->user()->shoppingLists()->create($data);
 
-        return ApiResponse::success($this->present($list), status: 201);
+        return ApiResponse::success(ShoppingListPresenter::full($list), status: 201);
     }
 
     public function show(ShowShoppingListRequest $request): JsonResponse
     {
         $list = $this->findOwned($request);
 
-        return ApiResponse::success($this->present($list));
+        return ApiResponse::success(ShoppingListPresenter::full($list));
     }
 
     public function update(UpdateShoppingListRequest $request): JsonResponse
@@ -135,18 +135,24 @@ class ShoppingListController extends Controller
             return ApiResponse::error(
                 'This list was changed elsewhere.',
                 409,
-                data: $this->present($list->fresh()),
+                data: ShoppingListPresenter::full($list->fresh()),
             );
         }
 
-        return ApiResponse::success($this->present($list->fresh()));
+        return ApiResponse::success(ShoppingListPresenter::full($list->fresh()));
     }
 
+    /**
+     * Move the list to the trash. The row keeps everything it had and only gains a
+     * `deleted_at`, which is enough to take it out of every other endpoint here — and leaves
+     * `TrashController` able to hand it back for `config('trash.retention_days')` before
+     * `lists:prune-trash` removes it for good.
+     */
     public function destroy(DestroyShoppingListRequest $request): JsonResponse
     {
         $this->findOwned($request)->delete();
 
-        return ApiResponse::success(message: 'Deleted');
+        return ApiResponse::success(message: 'Moved to trash');
     }
 
     /**
@@ -159,21 +165,5 @@ class ShoppingListController extends Controller
     private function findOwned(Request $request): ShoppingList
     {
         return $request->user()->shoppingLists()->findOrFail($request->integer('list_id'));
-    }
-
-    private function present(ShoppingList $list): array
-    {
-        return [
-            'id' => $list->id,
-            'name' => $list->name,
-            'show_quantity' => $list->show_quantity ?? true,
-            'show_checkbox' => $list->show_checkbox ?? true,
-            // Whether `name` and the item fields below are ciphertext.
-            'encrypted' => (bool) $list->encrypted,
-            // The version the client edits against: it sends this back as `base_version`,
-            // and a mismatch means another device got there first.
-            'version' => (int) $list->version,
-            'items' => $list->items()->get(['id', 'name', 'quantity', 'checked', 'position']),
-        ];
     }
 }

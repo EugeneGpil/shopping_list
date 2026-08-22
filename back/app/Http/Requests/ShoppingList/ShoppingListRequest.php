@@ -45,7 +45,8 @@ abstract class ShoppingListRequest extends FormRequest
      * Which list, from the query string.
      *
      * Every endpoint that names a list takes it this way rather than in the path, so the rule
-     * is shared by `show`, `update` and `destroy`.
+     * is shared by `show`, `update` and `destroy`, and by the three `Trash/*` requests — see
+     * `TrashRequest`.
      *
      * @return array<string, string>
      */

@@ -10,6 +10,7 @@ import {
 import { useAuthStore } from 'src/stores/auth'
 import { useShoppingListsStore } from 'src/stores/shoppingLists'
 import { clearDek, getDek, isUnlocked, setDek } from 'src/stores/shoppingLists/encryption'
+import { useTrashStore } from 'src/stores/trash'
 
 /**
  * The key, and the passkeys that open it — §6's flows.
@@ -91,12 +92,24 @@ export const useEncryptionStore = defineStore('encryption', {
      * track it — but "may this passkey be removed" cannot be answered without it, so this is
      * the one question it asks across.
      *
+     * **The trash counts too.** A trashed list is recoverable for the whole retention window and
+     * comes back with its rows exactly as they were, ciphertext included — so a key removed
+     * while it sits there would make the restore hand back a list that nothing can ever open,
+     * which is the one outcome this rule exists to prevent. The server counts them the same way
+     * (`withTrashed()` in `EncryptionController::destroy`), which is the count that decides.
+     *
+     * This one can be lower, on purpose and by accident, so it stays a warning rather than a
+     * verdict: a list deleted here and not yet pushed is out of `visibleLists` while the server
+     * still holds it, a list queued for purge is left out deliberately, and a device that has
+     * never opened the trash has nothing cached to count. The button says what it can; the 409
+     * is what refuses.
+     *
      * An action rather than a getter on purpose: nothing renders it, both callers want it at
      * the moment of a tap, and a getter would create the lists store — and run its
      * hydration — from inside a computed.
      */
     lockedListCount() {
-      return useShoppingListsStore().encryptedCount
+      return useShoppingListsStore().encryptedCount + useTrashStore().encryptedCount
     },
 
     /**
@@ -243,6 +256,10 @@ export const useEncryptionStore = defineStore('encryption', {
         try {
           // Edits to an encrypted list made before the key arrived were held back rather than
           // written in the clear (`payloadOf`), and this is the trigger that knows they can go.
+          // Awaiting it now waits for the pass rather than returning on a flag: a pass another
+          // trigger has already started is joined rather than skipped, so `fetchLists` below
+          // cannot overlap one. Ordering is what that guarantees, not an empty queue — a pass
+          // that has already stopped on this very list leaves its edit for the next trigger.
           await lists.sync()
           // Cheap, and it settles the collection before the editor reacts — see above.
           await lists.fetchLists()

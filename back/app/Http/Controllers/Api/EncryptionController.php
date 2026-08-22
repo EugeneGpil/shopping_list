@@ -76,6 +76,12 @@ class EncryptionController extends Controller
      *
      * This is the one thing about the content the server can honestly check — `encrypted` is its
      * own boolean column, not something it has to read the ciphertext to know.
+     *
+     * **`withTrashed` is load-bearing.** A deleted list is kept for `config('trash.retention_days')`
+     * and can be restored at any point in that window, so it is still data the user can ask for
+     * back — and the passkey is still the only way into it. Counting only the live lists, as this
+     * did when `delete` meant `delete`, would let the last key go while an encrypted list sat in
+     * the trash: the restore would then succeed and hand back a list nothing on earth can open.
      */
     public function destroy(DestroyEncryptionKeyRequest $request): JsonResponse
     {
@@ -90,10 +96,11 @@ class EncryptionController extends Controller
 
         $isLast = $user->encryptionKeys()->count() <= 1;
 
-        if ($isLast && $user->shoppingLists()->where('encrypted', true)->exists()) {
+        if ($isLast && $user->shoppingLists()->withTrashed()->where('encrypted', true)->exists()) {
             return ApiResponse::error(
                 'This is the only passkey that can open your encrypted lists. '
-                .'Register another one first, or unlock those lists.',
+                .'Register another one first, or unlock those lists — including any in the '
+                .'trash, which have to be restored or deleted for good first.',
                 409,
             );
         }

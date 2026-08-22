@@ -1,5 +1,6 @@
 import { api, isNetworkError } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
+import { orderedLike } from './order'
 import { createRow, localRecord, recordFromApi, recordFromIndexEntry } from './record'
 
 /**
@@ -54,8 +55,15 @@ export default {
     })
     // Lists the server cannot know about yet: created here and not pushed, or tombstoned
     // and not yet accepted. Both must outlive a refresh or the queue would be lost.
-    const localOnly = this.lists.filter((l) => !matched.has(l.id) && (!l.serverId || l.pendingDelete))
-    this.lists = [...fromServer, ...localOnly]
+    const localOnly = this.lists.filter(
+      (l) => !matched.has(l.id) && (!l.serverId || l.pendingDelete),
+    )
+    const merged = [...fromServer, ...localOnly]
+    // A reorder of ours that has not been sent yet is the newer statement of the order, so the
+    // server's is not adopted over it — `orderedLike` is the same rule `refreshFromStorage`
+    // applies to another tab's copy. Without this a refresh landing between the drag and its
+    // PUT rebuilt `lists` in the server's order, and `_pushOrder` then sent that back as ours.
+    this.lists = this.orderDirty ? orderedLike(merged, this.lists) : merged
   },
 
   /**

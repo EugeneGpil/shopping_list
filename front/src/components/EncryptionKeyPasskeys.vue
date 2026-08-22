@@ -43,14 +43,16 @@
 <script>
 import PasskeyItem from 'src/components/PasskeyItem.vue'
 import { useEncryptionStore } from 'src/stores/encryption'
+import { useTrashStore } from 'src/stores/trash'
 
 /**
  * The passkeys that can open the key, for an account that has one — the second half of §6.
  *
  * Adding one is the entire recovery story (§1) and the only way to read these lists on a device
  * the first passkey does not sync to. Removing the key altogether is deliberately absent: with
- * per-list encryption the way out is to unlock the locked lists one at a time, and the server
- * refuses the last remaining passkey precisely so that stays possible.
+ * per-list encryption the way out is to unlock the locked lists one at a time — and to restore
+ * or delete for good any that are in the trash, which cannot be unlocked while they sit there —
+ * and the server refuses the last remaining passkey precisely so that stays possible.
  */
 export default {
   name: 'EncryptionKeyPasskeys',
@@ -65,6 +67,22 @@ export default {
     encryption() {
       return useEncryptionStore()
     },
+  },
+
+  /**
+   * Refresh the trash, because a trashed list still needs a way in and `lockedListCount` counts
+   * the cached entries — on a device that has never opened the trash page there are none, and
+   * the warning below would then offer to remove a passkey the server will refuse (409).
+   *
+   * Not awaited and its failure ignored: this screen is about the passkeys and must open with or
+   * without a connection. Offline, the count falls back to whatever the device already knows,
+   * which is the same best-effort promise the whole advisory makes — the server is the one that
+   * enforces the rule.
+   */
+  mounted() {
+    useTrashStore()
+      .fetch()
+      .catch(() => {})
   },
 
   methods: {
@@ -117,7 +135,8 @@ export default {
           message:
             `It is the only one that can open your ${lockedCount} locked list(s), and ` +
             'removing it would leave them unopenable for good. Add a second passkey, or unlock ' +
-            'those lists first.',
+            'those lists first — a locked list in the trash counts, and has to be restored or ' +
+            'deleted for good.',
           ok: { label: 'OK', flat: true, noCaps: true },
         })
 

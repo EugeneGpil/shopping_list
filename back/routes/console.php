@@ -11,3 +11,7 @@ Artisan::command('inspire', function () {
 // Dispatched by the `scheduler` container (`php artisan schedule:work`), so this needs no
 // crontab on the host. See docs/go_offline.md.
 Schedule::command('tokens:prune-stale')->dailyAt('03:30');
+
+// Empties the trash of anything past its retention window. Not at the same minute as the
+// prune above only so that two destructive jobs are separable in the log.
+Schedule::command('lists:prune-trash')->dailyAt('03:45');

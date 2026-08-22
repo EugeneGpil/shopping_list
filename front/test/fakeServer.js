@@ -3,14 +3,28 @@
  * replaced `fetch` — so the tests exercise the actual request, error-body and
  * `isNetworkError` code rather than a mock of it.
  *
- * It mirrors the two backend behaviours the sync logic depends on, both of which are
- * pinned separately by `ShoppingListVersionTest` against the real controller:
+ * It mirrors the backend behaviours the sync logic depends on, each of which is pinned
+ * separately against the real controllers — the first two by `ShoppingListVersionTest`, the
+ * last by `ShoppingListTrashTest`:
  *   - any accepted write bumps `version`, including an item-only one
- *   - reordering does NOT touch it
+ *   - reordering does not touch it
+ *   - deleting a list only trashes it, and a trashed list is a 404 on every live endpoint
  */
+
+// Imported rather than restated, so `purge_at` here is the same arithmetic on the same window
+// the client renders its countdown from: a fake server that disagreed with the front end about
+// how long the trash keeps a list would pass its own tests while the app was wrong. Still two
+// copies of the number overall — `trashClock.js` and `config('trash.retention_days')` — because
+// the server never tells the client the setting; see the `RETENTION_DAYS` docblock for why.
+import { RETENTION_DAYS } from 'src/utils/trashClock'
+
 export function makeServer() {
   const server = {
     lists: [],
+    // Soft-deleted lists: still whole, invisible to every live endpoint. `DELETE shopping-list`
+    // moves a list here rather than dropping it, exactly as the soft delete does — which is why
+    // the tests that assert `server.lists` is empty after a delete still hold.
+    trash: [],
     offline: false,
     nextId: 1,
     requests: [],
@@ -20,6 +34,10 @@ export function makeServer() {
     // Writes still allowed before the connection dies; null means no limit. See
     // `offlineAfterWrites`.
     writesLeft: null,
+    // The one path that fails while everything else answers. See `offlineOn`.
+    deadPath: null,
+    // The requests whose answer is being withheld, and the promise that lets them go. See `hold`.
+    held: null,
   }
 
   server.seed = (name, items = [], { encrypted = false } = {}) => {
@@ -43,6 +61,27 @@ export function makeServer() {
     return list
   }
 
+  const dropFromTrash = (id) => {
+    server.trash = server.trash.filter((l) => l.id !== id)
+  }
+
+  const restoreFromTrash = (id) => {
+    const list = server.trash.find((l) => l.id === id)
+    dropFromTrash(id)
+    delete list.deleted_at
+    // Its `position` was never touched, so it lands back where the user remembers it.
+    server.lists.push(list)
+
+    return list
+  }
+
+  /**
+   * The same two operations, performed by somebody else's device while this one was offline —
+   * which is the only way a queued restore or purge can find its list already gone.
+   */
+  server.purgeElsewhere = dropFromTrash
+  server.restoreElsewhere = restoreFromTrash
+
   /** Somebody else's device writing to the same list. */
   server.editElsewhere = (id, items) => {
     const list = server.lists.find((l) => l.id === id)
@@ -63,6 +102,19 @@ export function makeServer() {
     encrypted: list.encrypted,
     version: list.version,
     items: list.items,
+  })
+
+  const trashTimes = (list) => ({
+    deleted_at: new Date(list.deleted_at).toISOString(),
+    purge_at: new Date(list.deleted_at + RETENTION_DAYS * 86400000).toISOString(),
+  })
+
+  const trashEntry = (list) => ({
+    id: list.id,
+    name: list.name,
+    encrypted: list.encrypted,
+    items_count: list.items.length,
+    ...trashTimes(list),
   })
 
   const ok = (data, status = 200) => ({
@@ -140,7 +192,42 @@ export function makeServer() {
       }
 
       if (method === 'DELETE') {
+        // Trashed, not destroyed: the row keeps everything it had and stops being visible to
+        // every live endpoint, which is what the soft delete does on the real server.
+        list.deleted_at = Date.now()
         server.lists = server.lists.filter((l) => l.id !== id)
+        server.trash.push(list)
+        return ok(null)
+      }
+    }
+
+    // The three trash endpoints that name a list all answer 404 when it is not in the trash —
+    // a live list included, as `onlyTrashed` does in the controller. The index takes no
+    // `list_id` and always answers.
+    if (path === 'trash' || path === 'trash/list' || path === 'trash/restore') {
+      const trashed = server.trash.find((l) => l.id === id)
+
+      if (path === 'trash' && method === 'GET') {
+        // Newest deletion first, `id` breaking ties, as the controller orders it.
+        return ok(
+          [...server.trash]
+            .sort((a, b) => b.deleted_at - a.deleted_at || b.id - a.id)
+            .map(trashEntry),
+        )
+      }
+
+      if (!trashed) return ok(null, 404)
+
+      if (path === 'trash/list' && method === 'GET') {
+        return ok({ ...present(trashed), ...trashTimes(trashed) })
+      }
+
+      if (path === 'trash/restore' && method === 'POST') {
+        return ok(present(restoreFromTrash(id)))
+      }
+
+      if (path === 'trash' && method === 'DELETE') {
+        dropFromTrash(id)
         return ok(null)
       }
     }
@@ -158,6 +245,35 @@ export function makeServer() {
     server.writesLeft = n
   }
 
+  /**
+   * Die on requests to one path and answer the rest — `null` to stop.
+   *
+   * For the reads that resolve an anomaly: `offlineAfterWrites` cannot reach a GET, and a
+   * connection that survives the push and not the question about it is otherwise unreachable.
+   */
+  server.offlineOn = (path) => {
+    server.deadPath = path
+  }
+
+  /**
+   * Take the requests `matches(method, path)` picks out and leave them unanswered until the
+   * returned `release` is called — one request genuinely in flight while the test carries on.
+   *
+   * Nothing else here is asynchronous: `handle` reads and mutates on the way in, so a request a
+   * test means to still be on the wire has already landed by its next line. That is what hides a
+   * race between two stores rather than reproducing it.
+   */
+  server.hold = (matches) => {
+    let open
+    const held = { matches, gate: new Promise((resolve) => (open = resolve)) }
+    server.held = held
+
+    return () => {
+      if (server.held === held) server.held = null
+      open()
+    }
+  }
+
   server.install = () => {
     globalThis.fetch = async (url, init = {}) => {
       if (server.offline) {
@@ -168,6 +284,8 @@ export function makeServer() {
       const path = parsed.pathname.replace(/^\/api\//, '')
       const method = init.method ?? 'GET'
 
+      if (server.deadPath === path) throw new TypeError('Failed to fetch')
+
       if (server.writesLeft !== null && method !== 'GET') {
         if (server.writesLeft === 0) {
           server.offline = true
@@ -177,6 +295,12 @@ export function makeServer() {
       }
       server.requests.push(`${method} ${path}${parsed.search}`)
       if (init.body !== undefined) server.sent.push({ method, path, raw: String(init.body) })
+
+      // After the recording, before the answer: the request is on the wire and what waits is
+      // the reply, which is what a slow connection actually does.
+      const held = server.held
+      if (held?.matches(method, path)) await held.gate
+
       return handle(
         method,
         path,

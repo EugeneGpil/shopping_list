@@ -66,7 +66,9 @@ const definition = defineStore('shoppingLists', {
     // unknown age since. Deliberately one flag for the whole store rather than per list: the
     // thing that went wrong is the connection, and it went wrong for all of them.
     stale: false,
-    // sync.js — a pass is in flight, and a second one is dropped rather than queued.
+    // sync.js — a pass is in flight, for the "Syncing…" line. Which pass, and how a second
+    // caller joins it rather than starting another, is `sync.js`; the slot it lives in,
+    // `privates.js`.
     syncing: false,
     // history.js — the undo and redo stacks for the open list.
     _past: [],
@@ -154,9 +156,10 @@ const definition = defineStore('shoppingLists', {
     visibleLists: (state) => state.lists.filter((l) => !l.pendingDelete),
 
     /**
-     * How many of the lists on screen are locked. Read by the encryption store, which needs
-     * it for the one rule it cannot answer alone: removing the last passkey while any list is
-     * still encrypted would leave that list unopenable for good.
+     * How many of the lists on screen are locked. One half of the encryption store's
+     * `lockedListCount` — the trash's own `encryptedCount` is the other — which together
+     * answer the one rule that store cannot answer alone: removing the last passkey while any
+     * list is still encrypted would leave that list unopenable for good.
      */
     encryptedCount() {
       return this.visibleLists.filter((l) => l.encrypted).length

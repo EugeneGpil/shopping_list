@@ -1,6 +1,7 @@
 import { Notify } from 'quasar'
 import { api, isNetworkError } from 'src/api'
 import { payloadOf, recordFromApi } from './record'
+import { privates } from './privates'
 
 /**
  * Pushing local state to the server: the one write path in the app.
@@ -132,15 +133,36 @@ export default {
   },
 
   /**
-   * Flush everything pending, in the order the API needs: tombstones first so a deleted
-   * list cannot be recreated by a later push, then creates and edits, then the order —
-   * which can only be sent once every list in it has a server id.
+   * Flush the queue, and hand back the pass that is doing it.
    *
-   * Serialised: a second call while one is running is dropped, not queued, because the
-   * running pass reads the records live and will pick up anything newer anyway.
+   * Serialised without being droppable: a second call while one is running joins that pass
+   * rather than starting a second one, so `await sync()` returns only when a pass has actually
+   * finished — which is what `encryption.unlock()` and the trash's `fetch()` need before they
+   * read the server back, and what a call that returned the moment it found the flag set would
+   * only look like. The triggers in `MainLayout` do not await it at all, and that is where the
+   * second call comes from.
+   *
+   * What it is not is a promise of an empty queue afterwards: a joined pass may have started
+   * before the caller's own change was flagged, and any pass stops early on 'offline' or
+   * 'locked'. Nothing is lost — the flags stay, and the next trigger takes them.
    */
   async sync() {
-    if (this.syncing) return
+    const own = privates(this)
+    if (own.syncPass) return own.syncPass
+
+    own.syncPass = this._syncPass().finally(() => {
+      own.syncPass = null
+    })
+
+    return own.syncPass
+  },
+
+  /**
+   * The pass itself, in the order the API needs: tombstones first so a deleted list cannot be
+   * recreated by a later push, then creates and edits, then the order — which can only be sent
+   * once every list in it has a server id.
+   */
+  async _syncPass() {
     this.syncing = true
     try {
       for (const record of this.lists.filter((l) => l.pendingDelete)) {

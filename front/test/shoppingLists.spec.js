@@ -8,6 +8,7 @@ import {
   localRecord,
   recordFromApi,
   recordFromIndexEntry,
+  trashedRecordFromApi,
 } from 'src/stores/shoppingLists/record'
 
 // The real auth store boots Firebase, which has no business in these tests. Only the two
@@ -34,6 +35,9 @@ function editRow(store, index, value) {
 
 let server
 let storage
+
+/** The server's lists as the index would return them, by name. */
+const inOrder = () => [...server.lists].sort((a, b) => a.position - b.position).map((l) => l.name)
 
 /** A store instance with nothing carried over, as after a cold launch. */
 function freshStore() {
@@ -104,6 +108,34 @@ describe('one shape for every list record', () => {
     // `payloadOf` puts this in every write and the header lights the lock by it, so a list
     // born here has to answer the question the same way a list from the server does.
     expect(localRecord('Groceries').encrypted).toBe(false)
+  })
+
+  /**
+   * The one producer deliberately left out of the equality above: a trashed record is a record
+   * plus two dates, so it cannot be interchangeable with the rest — and it never has to be,
+   * because nothing syncs it, stores it or compares it to a live record. What it does owe is
+   * the record's own field list underneath, which is what this pins: `TrashedListPage` reads
+   * `name`, `encrypted` and `items` from it exactly as the editor reads them from a live one.
+   */
+  it('gives a trashed list every record field, plus the two dates only the trash has', async () => {
+    const live = await recordFromApi({ id: 1, name: 'Groceries', items: [{ name: 'Milk' }] })
+    const trashed = await trashedRecordFromApi({
+      id: 1,
+      name: 'Groceries',
+      items: [{ name: 'Milk' }],
+      deleted_at: '2026-08-01T00:00:00+00:00',
+      purge_at: '2026-09-30T00:00:00+00:00',
+    })
+
+    expect(Object.keys(trashed)).toEqual([...Object.keys(live), 'deleted_at', 'purge_at'])
+    expect(trashed.purge_at).toBe('2026-09-30T00:00:00+00:00')
+    // Absent rather than null-checked at the call site: `view()` hands over whatever the
+    // endpoint sent, so the two dates default here rather than at each of the places that
+    // render them.
+    expect(await trashedRecordFromApi({ id: 1, name: 'Groceries' })).toMatchObject({
+      deleted_at: null,
+      purge_at: null,
+    })
   })
 })
 
@@ -692,6 +724,95 @@ describe('creating and deleting offline', () => {
     await store.sync()
     expect(server.lists.find((l) => l.id === b.id).position).toBe(0)
     expect(server.lists.find((l) => l.id === a.id).position).toBe(1)
+    expect(store.pendingCount).toBe(0)
+  })
+
+  // The index read the page fires on reconnect can be answered from before the flush that is
+  // still running, and rebuilding `lists` from it took the server's order — which `_pushOrder`
+  // then sent back as the user's, with nothing left flagged to say the drag had been lost.
+  it('keeps the order the user dragged when a refresh lands mid-flush', async () => {
+    const groceries = server.seed('Groceries', [{ name: 'Milk' }])
+    server.seed('Hardware')
+    server.seed('Tally')
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(groceries.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+    await store.reorderLists([...store.visibleLists].reverse())
+    expect(store.visibleLists.map((l) => l.name)).toEqual(['Tally', 'Hardware', 'Groceries'])
+
+    server.offline = false
+    const release = server.hold((method, path) => method === 'PUT' && path === 'shopping-list')
+    const flush = store.sync()
+    await store.fetchLists()
+    release()
+    await flush
+
+    expect(store.visibleLists.map((l) => l.name)).toEqual(['Tally', 'Hardware', 'Groceries'])
+    expect(inOrder()).toEqual(['Tally', 'Hardware', 'Groceries'])
+    expect(store.pendingCount).toBe(0)
+  })
+
+  it('shows a list another device added while a reorder was pending, at the end', async () => {
+    server.seed('A')
+    server.seed('B')
+    const store = freshStore()
+    await store.fetchLists()
+
+    server.offline = true
+    await store.reorderLists([...store.visibleLists].reverse())
+
+    server.offline = false
+    server.seed('C')
+    await store.fetchLists()
+
+    // Ours is the order that has not been sent, so it holds — and a list it could not have
+    // covered is appended rather than dropped, for the user to drag where they want it.
+    expect(store.visibleLists.map((l) => l.name)).toEqual(['B', 'A', 'C'])
+    await store.sync()
+    expect(inOrder()).toEqual(['B', 'A', 'C'])
+    expect(store.pendingCount).toBe(0)
+  })
+})
+
+// One pass at a time, and a caller who awaits it gets that pass rather than an immediate
+// return. Everything that awaits `sync()` for an ordering guarantee — the unlock's catch-up,
+// the trash page's read — is only correct if this holds, and `MainLayout` fires the same call
+// un-awaited from four triggers, so a second caller arriving mid-pass is the normal case.
+describe('flushing the queue once, for however many callers', () => {
+  it('has a second sync await the pass in flight rather than returning on the flag', async () => {
+    const seeded = server.seed('Groceries', [{ name: 'Milk' }])
+    const store = freshStore()
+    await store.fetchLists()
+    await store.open(seeded.id)
+
+    server.offline = true
+    editRow(store, 0, 'Oat milk')
+    await store.flush()
+    server.offline = false
+
+    const release = server.hold((method, path) => method === 'PUT' && path === 'shopping-list')
+    const first = store.sync()
+    let joined = false
+    // Through a proxy, as `quasar dev` calls every action — see the scratch test above. The pass
+    // in flight is held in `privates`, so a joiner keyed on `this` would find nothing there and
+    // start a second one, in development only.
+    const second = store.sync.call(new Proxy(store, {})).then(() => (joined = true))
+
+    // A macrotask, so every microtask those two calls could have queued has already run: a
+    // `sync()` that resolved on the flag would have resolved by now.
+    await settle(0)
+    expect(joined).toBe(false)
+
+    release()
+    await Promise.all([first, second])
+    expect(joined).toBe(true)
+    // Joined, not repeated — the edit goes out once however many callers waited for it.
+    expect(server.requests.filter((r) => r.startsWith('PUT shopping-list?'))).toHaveLength(1)
+    expect(server.lists[0].items.map((i) => i.name)).toEqual(['Oat milk'])
     expect(store.pendingCount).toBe(0)
   })
 })

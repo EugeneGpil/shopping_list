@@ -1,3 +1,4 @@
+import { orderedLike } from '../order'
 import { privates } from '../privates'
 import { readState } from '../storage'
 
@@ -46,11 +47,7 @@ export default function refreshFromStorage() {
 
   // A pending reorder of ours outranks their order, since it is the unsent change; with
   // nothing pending, theirs is simply newer than ours.
-  if (!this.orderDirty) {
-    const rank = new Map(incoming.lists.map((l, i) => [l.id, i]))
-    const last = rank.size
-    this.lists.sort((a, b) => (rank.get(a.id) ?? last) - (rank.get(b.id) ?? last))
-  }
+  if (!this.orderDirty) this.lists = orderedLike(this.lists, incoming.lists)
   this.orderDirty = this.orderDirty || incoming.orderDirty
 
   // No write is forced here. Mutating anything above arms the usual debounce, and a
