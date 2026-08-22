@@ -22,6 +22,17 @@
       @unlock="unlock"
     />
 
+    <!-- Not cached, and the fetch is still out. The editor is replaced for the third and last
+         time, and for the same reason as the two above: an empty editor here is not this list,
+         it is the absence of it — `markLoaded()` has not run, so anything typed into it would
+         be dropped, and "No items yet." would be a statement we cannot make yet. -->
+    <ShoppingListLoading
+      v-else-if="!store.isLoaded"
+      :name="store.listName"
+      :rows="store.current?.items_count ?? 3"
+      @back="$router.push('/')"
+    />
+
     <template v-else>
       <ShoppingListHeader
         :searching="searchOpen"
@@ -147,6 +158,7 @@
 import draggable from 'vuedraggable'
 import EncryptionDialog from 'src/components/EncryptionDialog.vue'
 import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
+import ShoppingListLoading from 'src/components/ShoppingListLoading.vue'
 import ShoppingListLocked from 'src/components/ShoppingListLocked.vue'
 import ShoppingListRow from 'src/components/ShoppingListRow.vue'
 import ShoppingListSaveStatus from 'src/components/ShoppingListSaveStatus.vue'
@@ -167,6 +179,7 @@ export default {
     draggable,
     EncryptionDialog,
     ShoppingListHeader,
+    ShoppingListLoading,
     ShoppingListLocked,
     ShoppingListRow,
     ShoppingListSaveStatus,
