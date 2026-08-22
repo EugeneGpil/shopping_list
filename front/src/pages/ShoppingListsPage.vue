@@ -54,7 +54,12 @@
     <ImportFromKeepDialog v-model="importing" />
     <EncryptionDialog v-model="encrypting" />
 
-    <q-inner-loading :showing="loading" />
+    <!-- Only when there is nothing to cover. The lists are cached and rendered on the first
+         frame, and `load()` runs on every arrival here — including coming back from a list —
+         so an unconditional overlay hid the correct lists behind a spinner for as long as the
+         index request took. With something on screen the refresh is a background job, and
+         `StaleDataNotice` below is what speaks up if it fails. -->
+    <q-inner-loading :showing="loading && !store.visibleLists.length" />
 
     <!-- The two directions, and they are independent: this one is what we may not have
          heard from the server, the one below is what the server has not heard from us. -->
