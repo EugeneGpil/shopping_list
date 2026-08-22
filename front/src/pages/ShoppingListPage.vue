@@ -22,8 +22,13 @@
       @unlock="unlock"
     />
 
-    <!-- Not cached, and the fetch is still out. The editor is replaced for the third and last
-         time, and for the same reason as the two above: an empty editor here is not this list,
+    <!-- Encrypted, the key is here, and the rows still would not open. A dead end rather than
+         a prompt or a retry — see `ShoppingListDamaged` — and the only one of these four that
+         used to be a silent `router.replace('/')`. -->
+    <ShoppingListDamaged v-else-if="damaged" @back="$router.push('/')" />
+
+    <!-- Not cached, and the fetch is still out. The editor is replaced for the fourth and last
+         time, and for the same reason as the three above: an empty editor here is not this list,
          it is the absence of it — `markLoaded()` has not run, so anything typed into it would
          be dropped, and "No items yet." would be a statement we cannot make yet. -->
     <ShoppingListLoading
@@ -157,6 +162,7 @@
 <script>
 import draggable from 'vuedraggable'
 import EncryptionDialog from 'src/components/EncryptionDialog.vue'
+import ShoppingListDamaged from 'src/components/ShoppingListDamaged.vue'
 import ShoppingListHeader from 'src/components/ShoppingListHeader.vue'
 import ShoppingListLoading from 'src/components/ShoppingListLoading.vue'
 import ShoppingListLocked from 'src/components/ShoppingListLocked.vue'
@@ -178,6 +184,7 @@ export default {
   components: {
     draggable,
     EncryptionDialog,
+    ShoppingListDamaged,
     ShoppingListHeader,
     ShoppingListLoading,
     ShoppingListLocked,
@@ -201,6 +208,10 @@ export default {
       // waiting to be answered. Kept separate from `loadFailed` because the two offer opposite
       // things — a retry button is useless here, and a fingerprint is useless there.
       locked: false,
+      // The key is here and the rows would not open with it. Its own flag rather than a third
+      // meaning for `loadFailed`, because what it offers is different again: no retry, since
+      // the same bytes fail the same way, and no fingerprint, since the fingerprint worked.
+      damaged: false,
       unlockError: '',
       lockBusy: false,
       settingUpKey: false,
@@ -332,6 +343,7 @@ export default {
     async openList(id) {
       this.loadFailed = false
       this.locked = false
+      this.damaged = false
       this.loading = true
       try {
         this.focusName(await this.store.open(id))
@@ -342,6 +354,14 @@ export default {
         // answered. Bouncing home would lose the list the user asked for.
         if (err.name === 'EncryptionLockedError') {
           this.locked = true
+          return
+        }
+        // The key opened and the list did not, which is neither a prompt nor a verdict on
+        // whether the list exists. It used to fall through to the redirect below and take the
+        // list off the screen with the route rewritten and nothing said — the one outcome that
+        // looks exactly like the app losing data.
+        if (err.name === 'DecryptionFailedError') {
+          this.damaged = true
           return
         }
         // Two very different failures land here. A response — 404, or 403 for someone

@@ -23,7 +23,13 @@ abstract class EncryptionRequest extends FormRequest
     /** 12-byte IV + 32-byte wrapped DEK + 16-byte GCM tag is 80 characters of base64. */
     protected const MAX_WRAPPED_KEY = 256;
 
-    /** A device name, which the client may send encrypted — same cap as any other field. */
+    /**
+     * A device name, which the client may send encrypted: 2048 characters of base64 holds ~1500
+     * bytes of sealed text, and a label is a handful of words.
+     *
+     * Deliberately unrelated to `ShoppingListRequest::MAX_FIELD`, which used to be this same
+     * number and is now sized for the ciphertext of a full-length list item.
+     */
     protected const MAX_LABEL = 2048;
 
     /**

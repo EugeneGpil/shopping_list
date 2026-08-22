@@ -18,6 +18,22 @@
 // the server never tells the client the setting; see the `RETENTION_DAYS` docblock for why.
 import { RETENTION_DAYS } from 'src/utils/trashClock'
 
+/**
+ * The one validation rule these tests turn on: `ShoppingListRequest::MAX_FIELD`, on the name and
+ * on every item field, as `StoreShoppingListRequest` and `UpdateShoppingListRequest` apply it.
+ *
+ * Restated rather than imported, since it lives in PHP — and that is the point of having it here
+ * at all: with no length rule this server accepts anything, so nothing on this side could notice
+ * the client and the server disagreeing about how long a sealed field may be, which is the
+ * disagreement that produced a 422 on text the user could see was short (§5, §9).
+ *
+ * Counted in codepoints, because Laravel's `max` on a string is `mb_strlen`: `[...text].length`
+ * joins surrogate pairs, `text.length` would count an emoji twice.
+ */
+const MAX_FIELD = 10960
+
+const tooLong = (value) => typeof value === 'string' && [...value].length > MAX_FIELD
+
 export function makeServer() {
   const server = {
     lists: [],
@@ -136,9 +152,36 @@ export function makeServer() {
     json: async () => ({ message: 'Server Error' }),
   })
 
+  // What Laravel answers a field over `MAX_FIELD` with, in the envelope its validator writes.
+  const unprocessable = (field) => ({
+    ok: false,
+    status: 422,
+    json: async () => ({
+      message: `The ${field} field must not be greater than ${MAX_FIELD} characters.`,
+      errors: { [field]: [`The ${field} field must not be greater than ${MAX_FIELD} characters.`] },
+    }),
+  })
+
+  const overLongField = (body) => {
+    if (tooLong(body.name)) return 'name'
+    for (const [index, item] of (body.items ?? []).entries()) {
+      if (tooLong(item.name)) return `items.${index}.name`
+      if (tooLong(item.quantity)) return `items.${index}.quantity`
+    }
+
+    return null
+  }
+
   function handle(method, path, query, body) {
     const id = Number(query.get('list_id'))
     const list = server.lists.find((l) => l.id === id)
+
+    // Before anything is written, as validation runs before a controller: the two write paths
+    // that carry user content are the only ones with a field to measure.
+    if (body && (path === 'shopping-lists' || path === 'shopping-list') && method !== 'GET') {
+      const field = overLongField(body)
+      if (field) return unprocessable(field)
+    }
 
     if (path === 'shopping-lists' && method === 'GET') {
       return ok(

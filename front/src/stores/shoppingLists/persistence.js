@@ -15,6 +15,10 @@ export const SAVE_STATUS = {
   offline: 'Saved on this device',
   failed: 'Save failed',
   conflict: 'Replaced by a newer version',
+  // Its own words rather than `failed`: nothing is wrong with the connection or the server, and
+  // no later attempt will do any better — only a shorter row will. Which row is in the
+  // notification `_pushList` raises, because it does not fit on this line.
+  tooLong: 'Item too long to save',
 }
 
 /**
@@ -30,6 +34,7 @@ const OUTCOME_STATUS = {
   locked: SAVE_STATUS.offline,
   failed: SAVE_STATUS.failed,
   conflict: SAVE_STATUS.conflict,
+  'too-long': SAVE_STATUS.tooLong,
 }
 
 /**

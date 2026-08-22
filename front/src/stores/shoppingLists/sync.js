@@ -42,10 +42,30 @@ export default {
   },
 
   /**
+   * The one save failure the user can do something about, so it says what to do.
+   *
+   * `_reportConflict`'s case exactly — an edit that is not reaching the server, where silence is
+   * the worse bug — and the indicator cannot carry it: one line with no room for a list name,
+   * and the row is what has to be found. Repeating costs nothing: the message is identical on
+   * every pass and Quasar groups notifications by their content, so a list that stays too long
+   * collects a badge rather than a stack of toasts.
+   */
+  _reportTooLong(err) {
+    Notify.create({
+      type: 'warning',
+      multiLine: true,
+      timeout: 8000,
+      message: `Row ${err.rowNumber} of "${err.listName}" is too long to save encrypted, so that list is still only on this device. Shorten that row and it will sync.`,
+    })
+  },
+
+  /**
    * Send one list, and say how it went.
    *
    * Returns what happened rather than throwing, because every caller wants to carry on:
-   * 'saved' | 'conflict' | 'offline' | 'failed' | 'locked'.
+   * 'saved' | 'conflict' | 'offline' | 'failed' | 'locked' | 'too-long'. With one exception, which
+   * pre-dates this union: the `await this._adopt(...)` inside the 409 branch, where a winning copy
+   * that will not decrypt rejects and that rejection escapes instead of becoming an outcome.
    *
    * **The reporting is here, not in `_save`, because this is where the outcome is known.** Only
    * the debounced per-list path used to report, so a record pushed by a pass — the offline queue
@@ -105,6 +125,14 @@ export default {
       // Encrypted list, no key yet — `payloadOf` refused rather than write plaintext over
       // it. The same shape as offline: the edit stays dirty and goes out after the unlock.
       if (err.name === 'EncryptionLockedError') return 'locked'
+      // The same shape once more — nothing sent, the edit still here — except that this one
+      // does not clear itself: no key is coming to release it, only a shorter row. So the user
+      // is told which row, and the pass carries on, because one over-long row on one list says
+      // nothing about the next list waiting to go out.
+      if (err.name === 'FieldTooLongError') {
+        this._reportTooLong(err)
+        return 'too-long'
+      }
       if (err.status === 409) {
         // The server sent the copy that won, so there is nothing more to ask it for.
         const winner = err.body?.data
@@ -196,7 +224,8 @@ export default {
       for (const record of this.lists.filter((l) => l.dirty || !l.serverId)) {
         // 'locked' stops the pass for the same reason 'offline' does: every remaining
         // encrypted list would refuse in exactly the same way, and the unlock is what
-        // starts it again.
+        // starts it again. 'too-long' deliberately does not — it is one row on one list, and
+        // stopping would strand every other pending edit behind it.
         if (['offline', 'locked'].includes(await this._pushList(record))) return
       }
       if (this.orderDirty) await this._pushOrder()

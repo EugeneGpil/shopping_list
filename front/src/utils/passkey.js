@@ -24,6 +24,25 @@ const ALGORITHMS = [
 ]
 
 /**
+ * How long the platform is given to produce an answer, on both `create()` and `get()`.
+ *
+ * **Not an optimisation — without it the promise may never settle.** The field is optional and
+ * a browser is allowed to wait forever; with every authenticator gone, `encryption.busy` stayed
+ * true past 30 seconds with nothing on screen but a spinning button, and only resolved when a
+ * device appeared. On a phone the platform dialog bounds this by itself, so what this covers is
+ * the case where nothing ever answers: no authenticator, a security key never plugged in, a
+ * cross-device prompt nobody picks up.
+ *
+ * 60s is WebAuthn's own convention and what the spec's examples use, and the reason it is not
+ * shorter is who pays for being wrong: a person walking to the laptop with the security key in a
+ * drawer, or finding where the fingerprint reader is on a machine they rarely use, gets one
+ * refusal and has to start again. A minute of spinner after a genuinely dead authenticator is
+ * the cheaper mistake. It is also inside the range browsers clamp to, so the number asked for is
+ * the number used rather than being silently rewritten.
+ */
+const TIMEOUT_MS = 60_000
+
+/**
  * The platform said no to PRF.
  *
  * Its own type because it is the one failure that is not worth retrying: §2b decided this
@@ -45,13 +64,19 @@ export class PrfUnsupportedError extends Error {
  * allowed — because telling a page which one happened is itself a leak. So the message here
  * covers the ground rather than guessing, and callers must **show it**: treating this as
  * "the user changed their mind" and staying silent leaves a button that does nothing, which
- * is exactly how it feels when it is really the second case.
+ * is exactly how it feels when the device has no passkey that can open these lists.
+ *
+ * **The `TIMEOUT_MS` expiry arrives here too, and is not separated out.** It could be guessed at
+ * — the deadline is ours, so an elapsed minute is a strong hint — but a prompt left standing for
+ * a minute and then dismissed is the same elapsed minute, so the guess would be presented as a
+ * fact for no gain: all three cases offer the user the same thing, which is to try again. So the
+ * message names the third case instead of ranking them.
  */
 export class PasskeyCancelledError extends Error {
   constructor(cause) {
     super(
-      'No passkey was used — the prompt was dismissed, or this device has no passkey ' +
-        'registered for these lists.',
+      'No passkey was used — the prompt was dismissed, nothing answered in time, or this ' +
+        'device has no passkey registered for these lists.',
     )
     this.name = 'PasskeyCancelledError'
     this.cause = cause
@@ -122,6 +147,7 @@ async function assertPrf(credentialIds = []) {
       publicKey: {
         challenge: randomChallenge(),
         rpId: globalThis.location.hostname,
+        timeout: TIMEOUT_MS,
         allowCredentials: credentialIds.map((id) => ({
           type: 'public-key',
           id: fromBase64Url(id),
@@ -166,6 +192,7 @@ export async function registerPasskey({ userId, userName, displayName }) {
     credential = await navigator.credentials.create({
       publicKey: {
         challenge: randomChallenge(),
+        timeout: TIMEOUT_MS,
         rp: { name: RP_NAME, id: globalThis.location.hostname },
         user: {
           // Ties the credential to the signed-in account, so registering a second passkey

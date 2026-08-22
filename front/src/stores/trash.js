@@ -300,7 +300,9 @@ const definition = defineStore('trash', {
      * Through `trashedRecordFromApi`, which crosses the encryption seam
      * (`docs/go_encrypted.md` §4): a trashed list is still ciphertext on the server, and this is
      * what opens it — so a locked one throws `EncryptionLockedError` here exactly as it would in
-     * the editor and the page offers the same fingerprint prompt. Deliberately outside the
+     * the editor and the page offers the same fingerprint prompt. A trashed list whose bytes will
+     * not open under the key raises the seam's other error, `DecryptionFailedError`, which
+     * `TrashedListPage` branches on the same way the editor does. Deliberately outside the
      * network fallback below: a missing key is not something a second copy of the same bytes
      * can fix.
      *

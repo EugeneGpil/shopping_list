@@ -1,15 +1,18 @@
 import { api } from 'src/api'
 import { useAuthStore } from 'src/stores/auth'
 import { privates } from '../privates'
+import { EncryptionLockedError, isUnlocked } from '../encryption'
 import { isTemp, recordFromApi } from '../record'
 
 /**
  * Make `id` the open list. Returns the key of the blank row created for an empty list
  * (so the caller can focus it), or null.
  *
- * Throws only when the list is not cached and cannot be fetched — the caller decides
- * whether that means "bounce home" or "show it offline". A cached list never throws,
- * which is what makes a list openable with no connection at all.
+ * Throws for three reasons, and the caller tells them apart: the list is not cached and cannot be
+ * fetched — "bounce home" or "show it offline"; it is encrypted and this session has no key, which
+ * is a fingerprint prompt; or the key is here and the bytes would not open, which is a dead end
+ * (`DecryptionFailedError`). A cached plaintext list never throws, which is what makes a list
+ * openable with no connection at all.
  */
 export default async function open(id) {
   const target = this._normalizeId(id)
@@ -27,6 +30,21 @@ export default async function open(id) {
 
   const record = this.current
   if (record?.items != null) {
+    // The cache holds this list in the clear (§7 decided that), so serving it would put a
+    // locked list on screen readable, with no prompt anywhere — and the refresh below cannot
+    // say so, because it is deliberately not awaited and its own `EncryptionLockedError` — now a
+    // `DecryptionFailedError` too — has nowhere to go. So the check happens here, on the call the
+    // page awaits, and the seam's own error type is what it raises: `openList` already turns that
+    // into the unlock panel.
+    //
+    // The list's flag decides, as everywhere else (§4) — not whether the cached rows look like
+    // ciphertext, which the plaintext cache means they never do. On this branch the flag is the
+    // cached one, and nothing corrects it here — the throw is above `_revalidate`, so a list
+    // another device has since unlocked keeps prompting until the next index read. Accepted:
+    // checking above both branches would refuse such a list without ever asking the server, and
+    // the fetch path gets the refusal from the seam using the server's own flag.
+    if (record.encrypted && !isUnlocked()) throw new EncryptionLockedError()
+
     this._revalidate(target)
     return this._ensureRow()
   }

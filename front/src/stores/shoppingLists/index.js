@@ -76,13 +76,13 @@ const definition = defineStore('shoppingLists', {
   }),
 
   getters: {
-    // The two states worth interrupting for: a real failure, and an edit that lost to a
-    // newer copy. "Saved on this device" is not one of them — that is normal offline life.
-    // Reported by every push now, not only the debounced one, so a pass draining the queue can
-    // raise this for the list on screen. Deliberately: a write the user is never told about is
-    // the worse bug.
+    // The three states worth interrupting for: a real failure, an edit that lost to a newer
+    // copy, and a row too long to be saved at all. "Saved on this device" is not one of them —
+    // that is normal offline life. Reported by every push now, not only the debounced one, so a
+    // pass draining the queue can raise this for the list on screen. Deliberately: a write the
+    // user is never told about is the worse bug.
     saveFailed: (state) =>
-      state.saveStatus === SAVE_STATUS.failed || state.saveStatus === SAVE_STATUS.conflict,
+      [SAVE_STATUS.failed, SAVE_STATUS.conflict, SAVE_STATUS.tooLong].includes(state.saveStatus),
 
     /** The open list's record, or null when nothing is open. */
     current: (state) => state.lists.find((l) => l.id === state.openId) ?? null,

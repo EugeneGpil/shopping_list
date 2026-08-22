@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { installLocalStorage, makeServer } from './fakeServer'
+import { notifications } from './stubs/quasar'
 import { generateDek } from 'src/utils/crypto'
-import { clearDek, setDek } from 'src/stores/shoppingLists/encryption'
+import { clearDek, getDek, MAX_SEALED_BYTES, setDek } from 'src/stores/shoppingLists/encryption'
 
 vi.mock('src/stores/auth', () => ({
   useAuthStore: () => ({ user: { uid: 'user-1' }, retrySync: async () => {} }),
@@ -377,6 +378,28 @@ describe('the encryption seam', () => {
     })
   })
 
+  describe('ciphertext that will not open', () => {
+    /** One base64 character of an item's stored name changed, which is all GCM's tag needs. */
+    const corrupt = (blob) => (blob[0] === 'A' ? 'B' : 'A') + blob.slice(1)
+
+    it('says so rather than looking like a list that is not there', async () => {
+      const { record } = await openLocked('Секретный список', ['водка'])
+      server.lists[0].items[0].name = corrupt(server.lists[0].items[0].name)
+
+      setActivePinia(createPinia())
+      const fresh = useShoppingListsStore()
+      await fresh.fetchLists()
+
+      // The name is what the page reads, so this is the whole of the fix: the failure used to
+      // arrive as a bare WebCrypto `OperationError`, indistinguishable from a 404 to a page
+      // whose only other cases are "locked", "the server answered" and "no connection" — so it
+      // took the server's-answer exit and did `router.replace('/')` with nothing said.
+      await expect(fresh.open(record.serverId)).rejects.toMatchObject({
+        name: 'DecryptionFailedError',
+      })
+    })
+  })
+
   describe('locked', () => {
     it('refuses to open an encrypted list rather than showing base64', async () => {
       const { record } = await openLocked('Секретный список', ['водка'])
@@ -391,6 +414,57 @@ describe('the encryption seam', () => {
       // as an item name on the next write — silent corruption dressed as a cosmetic problem.
       // The page turns this into a fingerprint prompt; it must not turn into rows.
       await expect(locked.open(serverId)).rejects.toThrow(/encrypted/i)
+    })
+
+    it('refuses a cached encrypted list rather than serving the plaintext cache', async () => {
+      // The bug this was written for, and it needed no server: the cache is plaintext by
+      // decision (§7), so a device that has opened the list once holds every row readable. The
+      // editor rendered them with no Unlock panel anywhere, because `open()` returned from cache
+      // and the refusal happened inside an un-awaited `_revalidate` where nothing could see it.
+      const { store, record } = await openLocked('Секретный список', ['водка', 'селёдка'])
+      expect(record.items.map((i) => i.name)).toEqual(['водка', 'селёдка'])
+
+      clearDek()
+
+      await expect(store.open(record.id)).rejects.toThrow(/encrypted/i)
+    })
+
+    it('opens that same cached list once the key is back', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+      const key = getDek()
+      clearDek()
+      await expect(store.open(record.id)).rejects.toThrow(/encrypted/i)
+
+      setDek(key)
+
+      // The other half of a prompt: it has to lead somewhere. And nothing has to be fetched to
+      // get there — the background revalidate is not awaited — which is what makes every later
+      // encrypted list of the session cost no second fingerprint and no wait on the network.
+      await store.open(record.id)
+      expect(store.items.map((i) => i.name)).toEqual(['водка'])
+    })
+
+    it('leaves a cached plaintext list alone', async () => {
+      const { store, record } = await openNew('Groceries', ['milk'])
+
+      clearDek()
+
+      // The refusal keys on the list's flag, not on holding a key — otherwise a locked session
+      // would prompt for the shopping list, which is the tax §1 exists to avoid.
+      await store.open(record.id)
+      expect(store.items.map((i) => i.name)).toEqual(['milk'])
+    })
+
+    it('opens a cached encrypted list offline once unlocked', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+
+      server.offline = true
+
+      // Nothing about the unlock needs the network — the passkey is local and the wrapped copy
+      // is cached (§6) — so a key in hand plus a cached list is a readable list with no
+      // connection at all. A refusal that reached for the server would have taken that away.
+      await store.open(record.id)
+      expect(store.items.map((i) => i.name)).toEqual(['водка'])
     })
 
     it('holds a pending edit back rather than writing plaintext over an encrypted list', async () => {
@@ -427,6 +501,81 @@ describe('the encryption seam', () => {
       // broken to the one user who has done nothing wrong.
       expect(store.saveStatus).toBe('Saved on this device')
       expect(store.saveFailed).toBe(false)
+    })
+  })
+
+  /**
+   * The byte budget at the seam, which was unpinned in both directions: nothing here said a
+   * sealed row still fits the server's cap, and the fake server enforced no length at all, so no
+   * test could have noticed the two disagreeing. It does enforce `MAX_FIELD` now — nothing else
+   * in the suite sends a field anywhere near it, so nothing was relying on the absence.
+   *
+   * The asymmetry is the whole point: the server's cap counts characters and a sealed field
+   * spends bytes, so this is the one length at which locking a list changes what may be saved.
+   */
+  describe('a row too long to encrypt', () => {
+    // One byte a character, so the length is the budget: exactly as much as fits, and one
+    // character more. Cyrillic would reach the same limit at half of this and emoji at a
+    // quarter, which is why the check cannot be a character count.
+    const atBudget = 'a'.repeat(MAX_SEALED_BYTES)
+    const overBudget = 'a'.repeat(MAX_SEALED_BYTES + 1)
+
+    beforeEach(() => {
+      notifications.length = 0
+    })
+
+    it('seals and saves a row at the budget, and the server takes it whole', async () => {
+      const { store, record, lockedAt } = await openLocked('Секретный список', [atBudget])
+
+      expect(record.dirty).toBe(false)
+      expect(store.saveStatus).toBe('Saved')
+      // Why the budget is derived from `MAX_FIELD` rather than picked: sealed, this row is
+      // exactly the 10960 characters the server admits. A budget nudged upwards would show up
+      // here as a 422 instead of passing quietly, now that the fake server measures.
+      expect(server.lists[0].items[0].name).toHaveLength(10960)
+      expect(everythingSent(lockedAt)).not.toContain(atBudget)
+    })
+
+    it('refuses the row past it, says which row, and keeps the edit here', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+      const stored = JSON.stringify(server.lists[0])
+      const before = sentSoFar()
+
+      store.beginEdit()
+      store.setName(0, overBudget)
+      store.endEdit()
+      await store.flush()
+
+      // Nothing was even attempted: the server's answer would be a 422 about a length the user
+      // cannot see, so the refusal happens at the seam instead — and then says so, which is the
+      // half a pill cannot do.
+      expect(sentSoFar()).toBe(before)
+      expect(JSON.stringify(server.lists[0])).toBe(stored)
+      expect(record.dirty).toBe(true)
+      expect(store.saveStatus).toBe('Item too long to save')
+      expect(store.saveFailed).toBe(true)
+      expect(notifications).toHaveLength(1)
+      expect(notifications[0].message).toContain('Row 1')
+      expect(notifications[0].message).toContain('Секретный список')
+    })
+
+    it('does not stop the pass — every other pending list still goes out', async () => {
+      const { store, record } = await openLocked('Секретный список', ['водка'])
+      store.importLists([{ title: 'Groceries', items: ['milk'] }])
+      const ordinary = store.lists.at(-1)
+
+      // The over-long list is first in the queue, so a pass that treated this outcome like
+      // 'offline' or 'locked' would return before reaching a list that has nothing wrong with
+      // it — one that has never been to the server at all.
+      record.items[0].name = overBudget
+      record.dirty = true
+
+      await store.sync()
+
+      expect(record.dirty).toBe(true)
+      expect(ordinary.dirty).toBe(false)
+      expect(server.lists.map((l) => l.name)).toEqual(['Секретный список', 'Groceries'])
+      expect(server.lists[1].items[0].name).toBe('milk')
     })
   })
 })

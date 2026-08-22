@@ -1,4 +1,11 @@
-import { EncryptionLockedError, isUnlocked, openField, sealField } from './encryption'
+import {
+  EncryptionLockedError,
+  FieldTooLongError,
+  isUnlocked,
+  openField,
+  overSealBudget,
+  sealField,
+} from './encryption'
 
 /**
  * The shape of a list record, and the two translations between it and the API.
@@ -77,6 +84,14 @@ const readField = (value, encrypted) =>
  * Not a heuristic: a failed unwrap is GCM's authentication tag saying "these bytes were not
  * written by this key", which is exactly what an ordinary plaintext title looks like. So the
  * `catch` means "it was never encrypted", and that is the common case.
+ *
+ * **The items read the same rejection the opposite way**, and the difference is which reading is
+ * true nearly always. §1 says a title is plaintext, so a title that will not open is one — a
+ * *damaged* title is the rare case, and it costs a base64 heading rather than a lost list. An
+ * item on a list flagged encrypted has no legitimate plaintext state at all: `payloadOf` refuses
+ * to write one (§9), so a row that will not open is damage, a foreign key, or plaintext from a
+ * build older than that refusal (§9) — and unlike a title it has no healing path, only
+ * `ShoppingListDamaged`.
  *
  * **Deletable** once no list predates the change — one pass through every locked list on a
  * device that holds the key is enough.
@@ -248,6 +263,19 @@ export async function payloadOf(record) {
   // unreadable on every other device, and left on the server until a vacuum (§8). Refusing
   // keeps the edit local until the key is back, which is what `pushList` does with this.
   if (!isUnlocked()) throw new EncryptionLockedError()
+
+  // The other thing an encrypted list cannot be written with: a row that will not fit sealed.
+  // `MAX_SEALED_BYTES` is why — the server's cap counts characters and a sealed field spends
+  // bytes, so a row that saved in the clear can be too long the moment the list is locked, and
+  // all the server can answer is a 422 about a length nobody can see. Refused here instead,
+  // where the row is still known and can be named. The edit stays local, which is the only
+  // honest thing left to do with it, but `_pushList` now says which list and which row rather
+  // than raising a bare "Save failed" about a save that will never succeed on its own.
+  rows.forEach((row, index) => {
+    if (overSealBudget(row.name) || overSealBudget(row.quantity)) {
+      throw new FieldTooLongError({ listName: record.name, rowNumber: index + 1 })
+    }
+  })
 
   return {
     ...payload,

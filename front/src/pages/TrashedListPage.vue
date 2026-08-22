@@ -1,6 +1,6 @@
 <template>
   <q-page class="q-pa-md" style="max-width: 720px; margin: 0 auto">
-    <!-- The three "this is not the list" states, the same three the editor has and for the
+    <!-- The four "this is not the list" states, the same four the editor has and for the
          same reasons — see `ShoppingListPage`. The first one is now only reachable for a list
          this device has never opened: one that has been inspected before is served from its
          cached payload instead. -->
@@ -13,6 +13,8 @@
       @back="toTrash"
       @unlock="unlock"
     />
+
+    <ShoppingListDamaged v-else-if="damaged" back-label="Back to the trash" @back="toTrash" />
 
     <div v-else-if="!record">
       <div class="row items-center q-mb-md">
@@ -92,6 +94,7 @@
 </template>
 
 <script>
+import ShoppingListDamaged from 'src/components/ShoppingListDamaged.vue'
 import ShoppingListLocked from 'src/components/ShoppingListLocked.vue'
 import ShoppingListUnavailable from 'src/components/ShoppingListUnavailable.vue'
 import { isNetworkError } from 'src/api'
@@ -120,7 +123,7 @@ import { deletesIn } from 'src/utils/trashClock'
 export default {
   name: 'TrashedListPage',
 
-  components: { ShoppingListLocked, ShoppingListUnavailable },
+  components: { ShoppingListDamaged, ShoppingListLocked, ShoppingListUnavailable },
 
   mixins: [retryWhenOnline],
 
@@ -130,6 +133,7 @@ export default {
       loading: false,
       loadFailed: false,
       locked: false,
+      damaged: false,
       unlockError: '',
     }
   },
@@ -184,6 +188,7 @@ export default {
       this.loading = true
       this.loadFailed = false
       this.locked = false
+      this.damaged = false
       try {
         this.record = await this.trash.view(this.listId)
       } catch (err) {
@@ -191,6 +196,13 @@ export default {
         // the page offers the fingerprint instead of a retry that would fail the same way.
         if (err.name === 'EncryptionLockedError') {
           this.locked = true
+          return
+        }
+        // The key worked and these bytes did not. Not a definite answer about the list, so it
+        // must not take the same exit: bouncing to the trash index would drop the one page that
+        // can say what happened.
+        if (err.name === 'DecryptionFailedError') {
+          this.damaged = true
           return
         }
         // A definite answer — restored elsewhere, already purged, or never ours — means there
