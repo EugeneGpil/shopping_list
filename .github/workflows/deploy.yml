@@ -164,7 +164,7 @@ jobs:
           # the last line only.
           BIN="$(composer global config bin-dir --absolute 2>/dev/null | tail -n1)"
 
-          # Called by absolute path: $GITHUB_PATH only affects LATER steps, so
+          # Called by absolute path: $GITHUB_PATH only affects later steps, so
           # `dep` is not yet resolvable from PATH inside this one.
           "$BIN/dep" --version
 
@@ -181,3 +181,55 @@ jobs:
 
       - name: Deploy
         run: dep deploy production
+
+      # --- notification --------------------------------------------------
+
+      # Dynamic values arrive as env vars rather than inline ${{ }} expressions:
+      # an expression is pasted into the script body before the shell sees it, so
+      # anything attacker-controlled reaching one would be executed.
+      #
+      # No parse_mode, so the subject needs no escaping and cannot break the
+      # markup; Telegram auto-links the bare run URL anyway.
+      - name: Notify Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not set — skipping the notification."
+            exit 0
+          fi
+
+          case "$JOB_STATUS" in
+            success)   HEADLINE="✅ $COMPOSE_PROJECT_NAME deployed" ;;
+            cancelled) HEADLINE="⚪ $COMPOSE_PROJECT_NAME deploy cancelled" ;;
+            *)         HEADLINE="❌ $COMPOSE_PROJECT_NAME deploy failed" ;;
+          esac
+
+          # github.event.head_commit is absent on workflow_dispatch, so the
+          # subject comes from the checked-out tree. Guarded because a failure
+          # in checkout itself leaves no repository to read.
+          SUBJECT="$(git log -1 --pretty=%s 2>/dev/null)" || SUBJECT=""
+          COMMIT_LINE="${COMMIT_SHA:0:7}${SUBJECT:+ $SUBJECT}"
+
+          TEXT="$(printf '%s\n%s\n%s' "$HEADLINE" "$COMMIT_LINE" "$RUN_URL")"
+
+          BODY="$(jq -n \
+            --arg chat_id "$TELEGRAM_CHAT_ID" \
+            --arg text "$TEXT" \
+            '{chat_id: $chat_id, text: $text}')"
+
+          if ! RESPONSE="$(curl -sS -m 30 \
+                -H 'Content-Type: application/json' \
+                -d "$BODY" \
+                "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage")"; then
+            echo "Telegram request failed; leaving the job status untouched."
+            exit 0
+          fi
+
+          printf '%s' "$RESPONSE" | jq -e '.ok' >/dev/null \
+            || echo "Telegram rejected the message: $RESPONSE"
